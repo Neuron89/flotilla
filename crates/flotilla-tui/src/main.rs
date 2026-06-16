@@ -292,6 +292,9 @@ fn ui(f: &mut Frame, app: &App) {
             Span::styled(row.info.name.clone(), Style::default().add_modifier(Modifier::BOLD)),
             Span::styled(format!("  ({})", row.info.profile), Style::default().fg(Color::DarkGray)),
         ];
+        if !row.info.tags.is_empty() {
+            spans.push(Span::styled(format!("  [{}]", row.info.tags.join(", ")), Style::default().fg(Color::Rgb(79, 140, 255))));
+        }
         if let Some(code) = row.info.exit_code {
             spans.push(Span::styled(format!("  exit={code}"), Style::default().fg(Color::DarkGray)));
         }

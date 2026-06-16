@@ -28,6 +28,70 @@ pub struct Config {
     /// Launch profiles, e.g. "claude", "hermes", "shell".
     #[serde(default = "default_profiles")]
     pub profiles: Vec<Profile>,
+
+    /// Phone push notifications (Phase 2).
+    #[serde(default)]
+    pub notifications: Notifications,
+}
+
+/// ntfy-backed push notifications. When a session transitions into a state in
+/// `notify_on` (e.g. `waiting`), the agent POSTs to its ntfy topic so your
+/// phone buzzes — even when you've walked away from the machine.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct Notifications {
+    /// Master switch.
+    #[serde(default)]
+    pub enabled: bool,
+    /// ntfy server base URL. Self-hosted (e.g. http://ntfy.tailnet) or https://ntfy.sh.
+    #[serde(default = "default_ntfy_url")]
+    pub ntfy_url: String,
+    /// ntfy topic to publish to (pick something unguessable on ntfy.sh).
+    #[serde(default)]
+    pub topic: String,
+    /// Optional ntfy access token (Bearer) for protected topics.
+    #[serde(default)]
+    pub token: String,
+    /// ntfy priority: min|low|default|high|urgent.
+    #[serde(default = "default_priority")]
+    pub priority: String,
+    /// Which state transitions trigger a push: any of "waiting", "exited".
+    #[serde(default = "default_notify_on")]
+    pub notify_on: Vec<String>,
+    /// This agent's reachable web URL (e.g. http://home-server:7878), used to
+    /// build the notification's tap-to-open deep link. Empty = no click action.
+    #[serde(default)]
+    pub public_url: String,
+    /// How often to poll session states for transitions, in milliseconds.
+    #[serde(default = "default_poll_ms")]
+    pub poll_ms: u64,
+}
+
+fn default_ntfy_url() -> String {
+    "https://ntfy.sh".to_string()
+}
+fn default_priority() -> String {
+    "high".to_string()
+}
+fn default_notify_on() -> Vec<String> {
+    vec!["waiting".to_string()]
+}
+fn default_poll_ms() -> u64 {
+    1500
+}
+
+impl Default for Notifications {
+    fn default() -> Self {
+        Notifications {
+            enabled: false,
+            ntfy_url: default_ntfy_url(),
+            topic: String::new(),
+            token: String::new(),
+            priority: default_priority(),
+            notify_on: default_notify_on(),
+            public_url: String::new(),
+            poll_ms: default_poll_ms(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -114,6 +178,7 @@ impl Default for Config {
             data_dir: default_data_dir(),
             host_label: None,
             profiles: default_profiles(),
+            notifications: Notifications::default(),
         }
     }
 }

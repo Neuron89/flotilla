@@ -48,6 +48,8 @@ pub struct SessionInfo {
     pub profile: String,
     #[allow(dead_code)]
     pub command: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
     pub state: String,
     pub exit_code: Option<i32>,
 }

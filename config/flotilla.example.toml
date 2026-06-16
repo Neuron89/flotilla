@@ -47,3 +47,19 @@ description = "Login shell"
 # cwd = "/home/hnester/portal"
 # [profiles.env]
 # FLOTILLA_SESSION = "portal"
+
+# ---- Phone push notifications (Phase 2, via ntfy) -------------------------
+# When a session transitions into a watched state (e.g. it starts WAITING on
+# your input), this host POSTs to your ntfy topic so your phone buzzes — even
+# when you've walked away. Self-host ntfy on the tailnet, or use ntfy.sh with
+# an unguessable topic. Install the ntfy app and subscribe to the same topic.
+[notifications]
+enabled = false                       # flip to true once topic is set
+ntfy_url = "https://ntfy.sh"          # or http://ntfy.your-tailnet:80
+topic = "flotilla-CHANGE-ME-9f3k2"    # pick something unguessable
+token = ""                            # optional ntfy access token (Bearer)
+priority = "high"                     # min | low | default | high | urgent
+notify_on = ["waiting"]               # add "exited" to alert on process exit
+public_url = ""                       # this host's tailnet URL, e.g. http://home-server:7878
+                                      # (enables tap-to-open deep links in the push)
+poll_ms = 1500                        # how often to check for state transitions

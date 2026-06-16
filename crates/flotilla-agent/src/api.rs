@@ -34,17 +34,33 @@ pub fn router(manager: Arc<Manager>) -> Router {
         .route("/sessions/:id/input", post(send_input))
         .route("/sessions/:id/buffer", get(get_buffer))
         .route("/sessions/:id/attach", get(ws_attach))
+        .route("/notify-test", post(notify_test))
         .layer(middleware::from_fn_with_state(manager.clone(), auth))
         .with_state(manager.clone());
 
     Router::new()
         .route("/", get(index))
+        .route("/manifest.json", get(manifest))
         .nest("/api", api)
         .layer(CorsLayer::very_permissive())
 }
 
 async fn index() -> Html<&'static str> {
     Html(WEB_INDEX)
+}
+
+const MANIFEST: &str = r##"{"name":"Flotilla","short_name":"Flotilla","start_url":"/","display":"standalone","background_color":"#0b0f17","theme_color":"#0b0f17","icons":[]}"##;
+
+async fn manifest() -> impl IntoResponse {
+    ([(header::CONTENT_TYPE, "application/manifest+json")], MANIFEST)
+}
+
+/// Fire a sample push so the user can confirm their ntfy config end-to-end.
+async fn notify_test(State(mgr): State<Arc<Manager>>) -> Response {
+    match crate::notify::test_push(&mgr).await {
+        Ok(()) => (StatusCode::OK, "sent").into_response(),
+        Err(e) => (StatusCode::BAD_REQUEST, e.to_string()).into_response(),
+    }
 }
 
 /// Bearer-token gate. Accepts the token via `Authorization: Bearer <t>` header
@@ -110,6 +126,8 @@ async fn list_sessions(State(mgr): State<Arc<Manager>>) -> impl IntoResponse {
 struct CreateBody {
     profile: String,
     name: Option<String>,
+    #[serde(default)]
+    tags: Vec<String>,
     #[serde(default = "default_rows")]
     rows: u16,
     #[serde(default = "default_cols")]
@@ -126,7 +144,7 @@ async fn create_session(
     State(mgr): State<Arc<Manager>>,
     Json(body): Json<CreateBody>,
 ) -> Response {
-    match mgr.create(&body.profile, body.name, body.rows, body.cols) {
+    match mgr.create(&body.profile, body.name, body.tags, body.rows, body.cols) {
         Ok(info) => (StatusCode::CREATED, Json(info)).into_response(),
         Err(e) => (StatusCode::BAD_REQUEST, e.to_string()).into_response(),
     }

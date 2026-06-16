@@ -24,7 +24,7 @@ impl Manager {
         })
     }
 
-    pub fn create(&self, profile_name: &str, name: Option<String>, rows: u16, cols: u16) -> Result<SessionInfo> {
+    pub fn create(&self, profile_name: &str, name: Option<String>, tags: Vec<String>, rows: u16, cols: u16) -> Result<SessionInfo> {
         let profile = self
             .config
             .profile(profile_name)
@@ -33,7 +33,7 @@ impl Manager {
 
         let id = uuid::Uuid::new_v4().simple().to_string()[..8].to_string();
         let name = name.unwrap_or_else(|| format!("{profile_name}-{id}"));
-        let session = Session::spawn(id.clone(), name, &profile, rows.max(1), cols.max(1))?;
+        let session = Session::spawn(id.clone(), name, tags, &profile, rows.max(1), cols.max(1))?;
         let info = session.info();
         self.sessions.write().insert(id, session);
         self.persist();

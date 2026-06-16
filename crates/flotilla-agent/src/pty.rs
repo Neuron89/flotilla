@@ -32,6 +32,17 @@ pub enum State {
     Exited,
 }
 
+impl State {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            State::Idle => "idle",
+            State::Working => "working",
+            State::Waiting => "waiting",
+            State::Exited => "exited",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct SessionInfo {
     pub id: String,
@@ -40,6 +51,7 @@ pub struct SessionInfo {
     pub command: String,
     pub cwd: Option<String>,
     pub created_at: u64,
+    pub tags: Vec<String>,
     pub state: State,
     pub exit_code: Option<i32>,
 }
@@ -51,6 +63,7 @@ pub struct Session {
     pub command: String,
     pub cwd: Option<String>,
     pub created_at: u64,
+    pub tags: Vec<String>,
 
     master: Mutex<Box<dyn MasterPty + Send>>,
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
@@ -63,7 +76,7 @@ pub struct Session {
 
 impl Session {
     /// Spawn a new session from a profile. `rows`/`cols` seed the PTY size.
-    pub fn spawn(id: String, name: String, profile: &Profile, rows: u16, cols: u16) -> Result<Arc<Session>> {
+    pub fn spawn(id: String, name: String, tags: Vec<String>, profile: &Profile, rows: u16, cols: u16) -> Result<Arc<Session>> {
         let pty_system = native_pty_system();
         let pair = pty_system.openpty(PtySize {
             rows,
@@ -145,6 +158,7 @@ impl Session {
             command: command_line,
             cwd: profile.cwd.clone(),
             created_at: now_secs(),
+            tags,
             master: Mutex::new(pair.master),
             writer: Arc::new(Mutex::new(writer)),
             child,
@@ -232,6 +246,7 @@ impl Session {
             command: self.command.clone(),
             cwd: self.cwd.clone(),
             created_at: self.created_at,
+            tags: self.tags.clone(),
             state: self.state(),
             exit_code: self.exit_code(),
         }

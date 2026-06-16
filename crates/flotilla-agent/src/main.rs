@@ -4,6 +4,7 @@
 mod api;
 mod config;
 mod manager;
+mod notify;
 mod pty;
 
 use anyhow::Result;
@@ -49,6 +50,7 @@ async fn main() -> Result<()> {
     let label = cfg.label();
     let token_on = !cfg.token.is_empty();
     let manager = manager::Manager::new(cfg);
+    notify::spawn_watcher(Arc::clone(&manager));
     let app = api::router(Arc::clone(&manager));
 
     let listener = tokio::net::TcpListener::bind(&bind).await?;
