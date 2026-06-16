@@ -1,0 +1,8 @@
+/target
+**/*.rs.bk
+*.log
+agent.out.log
+agent.err.log
+flotilla.toml
+flotilla-hosts.toml
+.DS_Store

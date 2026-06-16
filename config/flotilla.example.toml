@@ -1,0 +1,49 @@
+# flotilla-agent configuration — copy to flotilla.toml and edit per host.
+# Loaded with:  flotilla-agent --config /path/to/flotilla.toml
+
+# Bind to the tailnet. 0.0.0.0 is fine because Tailscale is the access boundary;
+# nothing here is exposed to the public internet unless you forward it.
+bind = "0.0.0.0:7878"
+
+# Optional shared bearer token (defense-in-depth on top of the tailnet ACL).
+# Leave empty to disable. If set, every client must present it.
+token = ""
+
+# Friendly name shown in the fleet UIs. Defaults to the machine hostname.
+host_label = "home-server"
+
+# Where session metadata snapshots are written (best-effort, for observability).
+# data_dir = "/var/lib/flotilla"
+
+# ---- Session launch profiles ----------------------------------------------
+# Each profile is one kind of agent you can spawn. The shared Obsidian
+# knowledge base is reached through Claude's *user-scope* MCP config, so a
+# plain `claude` profile already inherits it. Point `cwd` at the agent
+# workspace that holds your CLAUDE.md / .mcp.json if you keep one.
+
+[[profiles]]
+name = "claude"
+command = "claude"
+args = []
+# cwd = "/home/hnester/agent-workspace"   # holds CLAUDE.md + Obsidian MCP context
+description = "Claude Code (inherits user-scope MCP incl. Obsidian KB)"
+
+[[profiles]]
+name = "hermes"
+command = "hermes"
+args = []
+description = "Hermes agent"
+
+[[profiles]]
+name = "shell"
+command = "bash"
+args = ["-l"]
+description = "Login shell"
+
+# Example: a Claude session pinned to a specific repo with an injected env var.
+# [[profiles]]
+# name = "portal"
+# command = "claude"
+# cwd = "/home/hnester/portal"
+# [profiles.env]
+# FLOTILLA_SESSION = "portal"

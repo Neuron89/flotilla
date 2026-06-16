@@ -1,0 +1,30 @@
+[package]
+name = "flotilla-agent"
+description = "Per-host daemon that owns AI-agent PTY sessions and exposes them over HTTP/WebSocket on the tailnet."
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "flotilla-agent"
+path = "src/main.rs"
+
+[dependencies]
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+futures-util.workspace = true
+bytes.workspace = true
+clap.workspace = true
+
+axum = { version = "0.7", features = ["ws"] }
+tower-http = { version = "0.5", features = ["cors", "trace"] }
+portable-pty = "0.8"
+uuid = { version = "1", features = ["v4"] }
+toml = "0.8"
+hostname = "0.4"
+parking_lot = "0.12"

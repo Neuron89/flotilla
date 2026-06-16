@@ -1,0 +1,19 @@
+[Unit]
+Description=Flotilla agent — AI session daemon
+Documentation=https://github.com/Neuron89/flotilla
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Run as your user so spawned agents inherit your shell, PATH, and ~/.claude.
+User=%i
+ExecStart=/usr/local/bin/flotilla-agent --config /etc/flotilla/flotilla.toml
+Restart=always
+RestartSec=3
+# Keep sessions alive across transient failures; the daemon owns the PTYs.
+KillMode=mixed
+Environment=RUST_LOG=info
+
+[Install]
+WantedBy=multi-user.target

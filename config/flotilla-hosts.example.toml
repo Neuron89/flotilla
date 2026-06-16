@@ -1,0 +1,25 @@
+# Host list for the `flotilla` TUI.  Use with:  flotilla --config flotilla-hosts.toml
+# (or set FLOTILLA_HOSTS=/path/to/this/file)
+#
+# URLs use Tailscale MagicDNS names so they work identically from any machine
+# or your phone, anywhere. Find names with `tailscale status`.
+
+[[hosts]]
+label = "home-server"
+url = "http://home-server:7878"
+token = ""
+
+[[hosts]]
+label = "work-server"
+url = "http://work-server:7878"
+token = ""
+
+[[hosts]]
+label = "laptop-cachy"
+url = "http://laptop-cachy:7878"
+token = ""
+
+[[hosts]]
+label = "desktop"
+url = "http://desktop:7878"
+token = ""
