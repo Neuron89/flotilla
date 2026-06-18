@@ -34,6 +34,49 @@ pub struct Config {
     /// Phone push notifications (Phase 2).
     #[serde(default)]
     pub notifications: Notifications,
+
+    /// Web push into the installed PWA (Phase 3). Reuses the `[notifications]`
+    /// trigger settings (`notify_on`, `poll_ms`, `public_url`) as the watch
+    /// config; this block only adds the VAPID keys and the master switch.
+    #[serde(default)]
+    pub web_push: WebPush,
+}
+
+/// VAPID-authenticated Web Push. When enabled, the same state transitions that
+/// drive ntfy also fire an encrypted Web Push to every browser/PWA that has
+/// subscribed via `POST /api/push/subscribe`. Generate a keypair once with
+/// `flotilla-agent --gen-vapid` and use the SAME keys on every host so one
+/// browser subscription can be woken by any box.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct WebPush {
+    /// Master switch.
+    #[serde(default)]
+    pub enabled: bool,
+    /// VAPID private key — raw EC scalar, URL-safe base64, no padding.
+    #[serde(default)]
+    pub private_key: String,
+    /// VAPID public key — uncompressed P-256 point, URL-safe base64, no padding.
+    /// Handed to the browser as the `applicationServerKey`.
+    #[serde(default)]
+    pub public_key: String,
+    /// VAPID `sub` claim: a `mailto:` or origin URL identifying the sender.
+    #[serde(default = "default_vapid_subject")]
+    pub subject: String,
+}
+
+fn default_vapid_subject() -> String {
+    "mailto:flotilla@localhost".to_string()
+}
+
+impl Default for WebPush {
+    fn default() -> Self {
+        WebPush {
+            enabled: false,
+            private_key: String::new(),
+            public_key: String::new(),
+            subject: default_vapid_subject(),
+        }
+    }
 }
 
 /// ntfy-backed push notifications. When a session transitions into a state in
@@ -201,6 +244,7 @@ impl Default for Config {
             host_label: None,
             profiles: default_profiles(),
             notifications: Notifications::default(),
+            web_push: WebPush::default(),
         }
     }
 }

@@ -75,3 +75,19 @@ notify_on = ["waiting"]               # add "exited" to alert on process exit
 public_url = ""                       # this host's tailnet URL, e.g. http://home-server:7878
                                       # (enables tap-to-open deep links in the push)
 poll_ms = 1500                        # how often to check for state transitions
+
+# ---- Web push into the installed PWA (Phase 3) ----------------------------
+# Native browser/PWA notifications via VAPID Web Push, fired on the same
+# transitions as ntfy (reuses notify_on / poll_ms / public_url above). No ntfy
+# app needed. NOTE: the browser Push API requires a secure context, so this only
+# works when the web client is served over HTTPS (a Cloudflare tunnel or
+# `tailscale serve`) — not over a plain-http tailnet URL.
+#
+# Generate keys once with:  flotilla-agent --gen-vapid
+# Use the SAME keypair on EVERY host so one browser subscription can be woken by
+# any box (the PWA registers its subscription with all configured hosts).
+[web_push]
+enabled = false
+private_key = ""                      # from --gen-vapid (URL-safe base64, no pad)
+public_key = ""                       # from --gen-vapid
+subject = "mailto:you@example.com"    # VAPID contact (mailto: or origin URL)

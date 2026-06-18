@@ -5,12 +5,17 @@ use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use web_push::SubscriptionInfo;
+
 use crate::config::Config;
 use crate::pty::{Backend, Session, SessionInfo};
 
 pub struct Manager {
     pub config: Config,
     sessions: RwLock<HashMap<String, Arc<Session>>>,
+    /// Web Push subscriptions (Phase 3), persisted to disk so they survive
+    /// restarts.
+    push_subs: RwLock<Vec<SubscriptionInfo>>,
 }
 
 impl Manager {
@@ -18,12 +23,59 @@ impl Manager {
         if let Err(e) = std::fs::create_dir_all(&config.data_dir) {
             tracing::warn!("could not create data dir {:?}: {e}", config.data_dir);
         }
+        let push_subs = Self::load_push_subs(&config);
         let mgr = Arc::new(Manager {
             config,
             sessions: RwLock::new(HashMap::new()),
+            push_subs: RwLock::new(push_subs),
         });
         mgr.adopt_persisted();
         mgr
+    }
+
+    // ---- Web Push subscriptions -------------------------------------------
+
+    fn push_subs_path(config: &Config) -> std::path::PathBuf {
+        config.data_dir.join("push_subscriptions.json")
+    }
+
+    fn load_push_subs(config: &Config) -> Vec<SubscriptionInfo> {
+        std::fs::read_to_string(Self::push_subs_path(config))
+            .ok()
+            .and_then(|t| serde_json::from_str(&t).ok())
+            .unwrap_or_default()
+    }
+
+    fn persist_push_subs(&self) {
+        let subs = self.push_subs.read();
+        if let Ok(json) = serde_json::to_string_pretty(&*subs) {
+            let _ = std::fs::write(Self::push_subs_path(&self.config), json);
+        }
+    }
+
+    /// Snapshot of current push subscriptions (for the notifier).
+    pub fn push_subs(&self) -> Vec<SubscriptionInfo> {
+        self.push_subs.read().clone()
+    }
+
+    /// Add or replace a subscription (keyed by endpoint). Idempotent.
+    pub fn add_push_sub(&self, sub: SubscriptionInfo) {
+        {
+            let mut subs = self.push_subs.write();
+            subs.retain(|s| s.endpoint != sub.endpoint);
+            subs.push(sub);
+        }
+        self.persist_push_subs();
+    }
+
+    /// Drop a subscription by endpoint (explicit unsubscribe, or pruned after a
+    /// push returns 404/410).
+    pub fn remove_push_sub(&self, endpoint: &str) {
+        {
+            let mut subs = self.push_subs.write();
+            subs.retain(|s| s.endpoint != endpoint);
+        }
+        self.persist_push_subs();
     }
 
     /// On startup, re-adopt tmux-backed sessions that outlived the previous

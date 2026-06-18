@@ -26,6 +26,11 @@ struct Args {
     /// Override the bearer token.
     #[arg(long, env = "FLOTILLA_TOKEN")]
     token: Option<String>,
+
+    /// Generate a VAPID keypair for Web Push, print a ready-to-paste
+    /// `[web_push]` config block, and exit. Use the SAME keys on every host.
+    #[arg(long)]
+    gen_vapid: bool,
 }
 
 #[tokio::main]
@@ -38,6 +43,18 @@ async fn main() -> Result<()> {
         .init();
 
     let args = Args::parse();
+
+    if args.gen_vapid {
+        let (private, public) = notify::generate_vapid_keys();
+        println!("# Paste into flotilla.toml on EVERY host (identical keys), then set enabled = true:");
+        println!("[web_push]");
+        println!("enabled = true");
+        println!("private_key = \"{private}\"");
+        println!("public_key = \"{public}\"");
+        println!("subject = \"mailto:you@example.com\"");
+        return Ok(());
+    }
+
     let mut cfg = config::Config::load(args.config.as_deref())?;
     if let Some(b) = args.bind {
         cfg.bind = b;

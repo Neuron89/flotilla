@@ -29,3 +29,10 @@ toml = "0.8"
 hostname = "0.4"
 parking_lot = "0.12"
 reqwest = { version = "0.12", features = ["json"] }
+
+# Web push (Phase 3): pure-Rust crypto (ece/p256), hyper client — no openssl,
+# so it builds cleanly on the Windows fleet too.
+web-push = { version = "0.11", default-features = false, features = ["hyper-client"] }
+p256 = { version = "0.13", features = ["arithmetic"] }
+rand = "0.8"
+base64 = "0.22"

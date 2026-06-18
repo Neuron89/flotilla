@@ -11,7 +11,7 @@
 [![Network](https://img.shields.io/badge/Tailscale-tailnet-blueviolet?logo=tailscale&logoColor=white)](deploy/tailscale-setup.md)
 [![Clients](https://img.shields.io/badge/Clients-TUI%20%2B%20Web%2FPWA-0aa)](#components)
 [![License](https://img.shields.io/badge/License-MIT-yellow)](#license)
-[![Status](https://img.shields.io/badge/Phase%201-shipped%20✅-success)](#roadmap)
+[![Status](https://img.shields.io/badge/Phase%203-shipped%20✅-success)](#roadmap)
 
 </div>
 
@@ -174,8 +174,12 @@ All routes under `/api`. Bearer token optional — `Authorization: Bearer …` o
 | `POST` | `/api/sessions/:id/input` | fire-and-forget input (auto-appends Enter) |
 | `GET` | `/api/sessions/:id/buffer` | current scrollback (bytes) |
 | `GET` | `/api/sessions/:id/attach` | **WebSocket** — binary = PTY I/O; text JSON `{"type":"resize",…}` |
-| `POST` | `/api/notify-test` | fire a sample ntfy push to verify notification config |
+| `POST` | `/api/notify-test` | fire a sample push (ntfy and/or web push) to verify config |
+| `GET` | `/api/push/vapid` | VAPID public key for the browser to subscribe (404 if web push off) |
+| `POST` | `/api/push/subscribe` | register a browser PushSubscription |
+| `POST` | `/api/push/unsubscribe` | drop a subscription `{endpoint}` |
 | `GET` | `/manifest.json` | PWA manifest (installable web client) |
+| `GET` | `/sw.js` | service worker (web push notifications) |
 
 **Status values:**
 🟢 `working` (output now) · 🟡 `waiting` (tail looks like a prompt) · ⚪ `idle` · ⚫ `exited`
@@ -218,6 +222,23 @@ transition into 🟡 `waiting` (configurable; add `exited` to catch crashes).
 The alert carries the host label, session name, profile, and any tags — so a
 glance tells you *which* box and *which* agent is blocked.
 
+### Web push into the PWA (no ntfy app)
+
+For native notifications straight into the installed PWA — no ntfy app — enable
+**Web Push**. It fires on the same transitions as ntfy and reuses the same
+`notify_on` / `public_url` settings.
+
+1. Generate a VAPID keypair once: `flotilla-agent --gen-vapid`. Put the **same**
+   keys in the `[web_push]` block of **every** host's `flotilla.toml` (one
+   browser subscription is then wakeable by any box) and set `enabled = true`.
+2. Open the web client and tap 🔔 to subscribe.
+
+> [!IMPORTANT]
+> The browser Push API needs a **secure context**, so web push only works when
+> the client is served over **HTTPS** (a Cloudflare tunnel or `tailscale serve`)
+> or from `localhost` — not over a plain-`http://` tailnet URL. The 🔔 button
+> dims and explains this when the context isn't secure.
+
 <br/>
 
 ## ⚠️ Limitations
@@ -242,7 +263,8 @@ glance tells you *which* box and *which* agent is blocked.
 |:---:|:---:|---|
 | **1** | ✅ **Shipped** | agent + TUI + web client + deploy scripts |
 | **2** | ✅ **Shipped** | ntfy phone push when a session goes 🟡 `waiting` (or exits); per-session tags + fleet filter; deep-link tap-to-attach; installable PWA |
-| **3** | 🚧 **In progress** | ✅ opt-in tmux backend (Linux/macOS) for restart-proof sessions; session "templates" (spawn a named set across hosts at once); web push into the PWA |
+| **3** | ✅ **Shipped** | opt-in tmux backend (Linux/macOS) for restart-proof sessions; session "templates" (spawn a named set across hosts at once); VAPID web push into the installed PWA |
+| **4** | 💡 Next | auto cloudflared tunnel per agent + Cloudflare Access (OAuth/OTP) at the edge with per-user identity; fix WS query-string token leak; optional Tauri desktop shell |
 
 <br/>
 

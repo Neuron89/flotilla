@@ -35,12 +35,16 @@ pub fn router(manager: Arc<Manager>) -> Router {
         .route("/sessions/:id/buffer", get(get_buffer))
         .route("/sessions/:id/attach", get(ws_attach))
         .route("/notify-test", post(notify_test))
+        .route("/push/vapid", get(push_vapid))
+        .route("/push/subscribe", post(push_subscribe))
+        .route("/push/unsubscribe", post(push_unsubscribe))
         .layer(middleware::from_fn_with_state(manager.clone(), auth))
         .with_state(manager.clone());
 
     Router::new()
         .route("/", get(index))
         .route("/manifest.json", get(manifest))
+        .route("/sw.js", get(service_worker))
         .nest("/api", api)
         .layer(CorsLayer::very_permissive())
 }
@@ -53,6 +57,78 @@ const MANIFEST: &str = r##"{"name":"Flotilla","short_name":"Flotilla","start_url
 
 async fn manifest() -> impl IntoResponse {
     ([(header::CONTENT_TYPE, "application/manifest+json")], MANIFEST)
+}
+
+/// Service worker (Phase 3). Served at the origin root so its scope is `/`.
+/// Shows a notification on `push` and deep-links to the session on click.
+const SERVICE_WORKER: &str = r#"
+self.addEventListener('push', (event) => {
+  let d = {};
+  try { d = event.data ? event.data.json() : {}; } catch (e) {}
+  const title = d.title || 'Flotilla';
+  const opts = {
+    body: d.body || '',
+    tag: d.tag,
+    renotify: true,
+    data: { url: d.url || '/' },
+  };
+  event.waitUntil(self.registration.showNotification(title, opts));
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const url = (event.notification.data && event.notification.data.url) || '/';
+  event.waitUntil((async () => {
+    const all = await clients.matchAll({ type: 'window', includeUncontrolled: true });
+    for (const c of all) {
+      if ('focus' in c) {
+        try { await c.navigate(url); } catch (e) {}
+        return c.focus();
+      }
+    }
+    return clients.openWindow(url);
+  })());
+});
+"#;
+
+async fn service_worker() -> impl IntoResponse {
+    (
+        [(header::CONTENT_TYPE, "application/javascript")],
+        SERVICE_WORKER,
+    )
+}
+
+/// Hand the browser the VAPID public key it needs to subscribe. 404 when web
+/// push isn't configured so the client can hide the toggle.
+async fn push_vapid(State(mgr): State<Arc<Manager>>) -> Response {
+    let wp = &mgr.config.web_push;
+    if !wp.enabled || wp.public_key.is_empty() {
+        return (StatusCode::NOT_FOUND, "web push not configured").into_response();
+    }
+    Json(json!({ "publicKey": wp.public_key })).into_response()
+}
+
+/// Store a browser PushSubscription (its JSON deserializes straight into
+/// `SubscriptionInfo`).
+async fn push_subscribe(
+    State(mgr): State<Arc<Manager>>,
+    Json(sub): Json<web_push::SubscriptionInfo>,
+) -> Response {
+    if sub.endpoint.is_empty() || sub.keys.p256dh.is_empty() || sub.keys.auth.is_empty() {
+        return (StatusCode::BAD_REQUEST, "incomplete subscription").into_response();
+    }
+    mgr.add_push_sub(sub);
+    StatusCode::CREATED.into_response()
+}
+
+#[derive(Deserialize)]
+struct Unsub {
+    endpoint: String,
+}
+
+async fn push_unsubscribe(State(mgr): State<Arc<Manager>>, Json(body): Json<Unsub>) -> Response {
+    mgr.remove_push_sub(&body.endpoint);
+    StatusCode::NO_CONTENT.into_response()
 }
 
 /// Fire a sample push so the user can confirm their ntfy config end-to-end.

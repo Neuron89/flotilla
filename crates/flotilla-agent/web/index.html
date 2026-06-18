@@ -84,6 +84,7 @@
   <input id="filter" placeholder="filter name/tag…" style="max-width:170px" />
   <button id="newBtn">+ Session</button>
   <button id="tplBtn">Templates</button>
+  <button id="pushBtn" title="Enable PWA push notifications">🔔</button>
   <button id="hostsBtn">Hosts</button>
   <button id="refreshBtn">↻</button>
 </header>
@@ -449,6 +450,73 @@ async function launchTemplate(t) {
     : `template '${t.name}' launched: ${ok} session(s)`;
   await refresh();
 }
+
+// ---- Web Push into the PWA (Phase 3) ----
+// Push needs a secure context (HTTPS, or localhost). On a plain-http tailnet URL
+// the browser hides the Push API — front the agent with HTTPS (Cloudflare tunnel
+// / `tailscale serve`) to use this. The same browser subscription is registered
+// with every host, so any box can wake the PWA (all hosts must share VAPID keys).
+const PUSH_SUPPORTED = "serviceWorker" in navigator && "PushManager" in window && window.isSecureContext;
+
+function urlB64ToUint8Array(b64) {
+  const pad = "=".repeat((4 - (b64.length % 4)) % 4);
+  const s = (b64 + pad).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(s);
+  return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
+}
+
+// The agent that served this page (used to fetch its VAPID key + relay token).
+function originHost() {
+  return hosts.find(h => h.url.replace(/\/$/, "") === location.origin) || { label: "this host", url: location.origin, token: "" };
+}
+
+async function registerSW() {
+  if (!PUSH_SUPPORTED) return null;
+  try { return await navigator.serviceWorker.register("/sw.js"); }
+  catch (e) { console.warn("sw register failed", e); return null; }
+}
+
+async function updatePushButton() {
+  const btn = $("pushBtn");
+  if (!PUSH_SUPPORTED) { btn.title = "Push needs HTTPS (Cloudflare tunnel / tailscale serve)"; btn.style.opacity = ".45"; return; }
+  const reg = await navigator.serviceWorker.ready;
+  const sub = await reg.pushManager.getSubscription();
+  btn.textContent = sub ? "🔔 On" : "🔔";
+  btn.title = sub ? "Push enabled — tap to disable" : "Enable PWA push notifications";
+}
+
+async function togglePush() {
+  if (!PUSH_SUPPORTED) {
+    alert("Web Push needs a secure context (HTTPS or localhost). Front this agent with HTTPS — e.g. a Cloudflare tunnel or `tailscale serve` — then try again.");
+    return;
+  }
+  const reg = await navigator.serviceWorker.ready;
+  let sub = await reg.pushManager.getSubscription();
+  if (sub) {
+    const endpoint = sub.endpoint;
+    try { await sub.unsubscribe(); } catch {}
+    for (const h of hosts) { try { await api(h, "/api/push/unsubscribe", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ endpoint }) }); } catch {} }
+    $("status").textContent = "push disabled";
+    return updatePushButton();
+  }
+  const perm = await Notification.requestPermission();
+  if (perm !== "granted") { alert("Notification permission denied."); return; }
+  let vapid;
+  try { vapid = await api(originHost(), "/api/push/vapid"); }
+  catch { alert("This host has web push disabled (set [web_push] in flotilla.toml)."); return; }
+  sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlB64ToUint8Array(vapid.publicKey) });
+  const subJson = sub.toJSON();
+  let ok = 0;
+  for (const h of hosts) {
+    try { await api(h, "/api/push/subscribe", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(subJson) }); ok++; }
+    catch (e) { /* host may have push off — skip */ }
+  }
+  $("status").textContent = `push enabled on ${ok}/${hosts.length} host(s)`;
+  updatePushButton();
+}
+$("pushBtn").onclick = togglePush;
+
+registerSW().then(updatePushButton);
 
 refresh();
 setInterval(() => { if (!active) refresh(); }, 5000); // auto-refresh fleet when not attached
