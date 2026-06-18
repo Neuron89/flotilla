@@ -455,13 +455,21 @@ fn centered_rect(pct_x: u16, pct_y: u16, area: Rect) -> Rect {
 /// Raw interactive attach. Writes PTY output straight to the terminal and
 /// forwards keystrokes (translated to bytes) until Ctrl-] is pressed.
 async fn attach(host: &Host, id: &str, name: &str, events: &mut EventStream) -> Result<()> {
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
     let scheme_url = host.url.replacen("http", "ws", 1);
-    let mut url = format!("{scheme_url}/api/sessions/{id}/attach");
+    let url = format!("{scheme_url}/api/sessions/{id}/attach");
+
+    // Carry the token in the Sec-WebSocket-Protocol header rather than the URL
+    // query string (which leaks into logs).
+    let mut request = url.into_client_request()?;
     if !host.token.is_empty() {
-        url.push_str(&format!("?token={}", host.token));
+        request.headers_mut().insert(
+            "Sec-WebSocket-Protocol",
+            format!("flotilla.bearer, {}", host.token).parse()?,
+        );
     }
 
-    let (stream, _) = connect_async(url).await?;
+    let (stream, _) = connect_async(request).await?;
     let (mut tx, mut rx) = stream.split();
 
     let mut out = stdout();

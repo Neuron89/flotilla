@@ -40,6 +40,31 @@ pub struct Config {
     /// config; this block only adds the VAPID keys and the master switch.
     #[serde(default)]
     pub web_push: WebPush,
+
+    /// Cloudflare Access JWT validation (Phase 4). When enabled, requests must
+    /// carry a valid Access JWT (or, if `token` is also set, the bearer token).
+    #[serde(default)]
+    pub access: AccessConfig,
+}
+
+/// Cloudflare Access integration. Front the agent with a Cloudflare Tunnel and
+/// an Access application; this validates the JWT Cloudflare injects so only
+/// users who passed the Access login (OAuth/OTP) reach the daemon.
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct AccessConfig {
+    /// Master switch.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Team domain, e.g. `https://yourteam.cloudflareaccess.com`.
+    #[serde(default)]
+    pub team_domain: String,
+    /// The Access application's AUD tag (Application Audience).
+    #[serde(default)]
+    pub aud: String,
+    /// Optional email allowlist enforced in addition to the Cloudflare policy.
+    /// Empty = trust any user the Access policy admitted.
+    #[serde(default)]
+    pub allowed_emails: Vec<String>,
 }
 
 /// VAPID-authenticated Web Push. When enabled, the same state transitions that
@@ -245,6 +270,7 @@ impl Default for Config {
             profiles: default_profiles(),
             notifications: Notifications::default(),
             web_push: WebPush::default(),
+            access: AccessConfig::default(),
         }
     }
 }

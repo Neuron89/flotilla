@@ -9,7 +9,7 @@ use axum::{
     middleware::{self, Next},
     response::{Html, IntoResponse, Response},
     routing::{get, post},
-    Json, Router,
+    Extension, Json, Router,
 };
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
@@ -19,6 +19,7 @@ use std::io::Write;
 use std::sync::Arc;
 use tower_http::cors::CorsLayer;
 
+use crate::access::Identity;
 use crate::manager::Manager;
 
 /// The single-file web/mobile client, baked into the binary so the daemon is
@@ -35,6 +36,7 @@ pub fn router(manager: Arc<Manager>) -> Router {
         .route("/sessions/:id/buffer", get(get_buffer))
         .route("/sessions/:id/attach", get(ws_attach))
         .route("/notify-test", post(notify_test))
+        .route("/me", get(me))
         .route("/push/vapid", get(push_vapid))
         .route("/push/subscribe", post(push_subscribe))
         .route("/push/unsubscribe", post(push_unsubscribe))
@@ -139,29 +141,104 @@ async fn notify_test(State(mgr): State<Arc<Manager>>) -> Response {
     }
 }
 
-/// Bearer-token gate. Accepts the token via `Authorization: Bearer <t>` header
-/// or `?token=<t>` query (so browser WebSockets, which can't set headers, work).
-/// Empty configured token disables the check.
-async fn auth(State(mgr): State<Arc<Manager>>, req: axum::extract::Request, next: Next) -> Response {
+/// WebSocket subprotocol marker the browser/TUI offers alongside the bearer
+/// token, so the token travels in `Sec-WebSocket-Protocol` (which browsers can
+/// set) instead of the URL query string (which leaks into logs).
+pub const WS_BEARER_PROTO: &str = "flotilla.bearer";
+
+/// Auth gate. A request is admitted if it satisfies *either* Cloudflare Access
+/// (a valid JWT in `Cf-Access-Jwt-Assertion` or the `CF_Authorization` cookie,
+/// giving per-user identity) *or* the shared bearer token (via
+/// `Authorization: Bearer`, the `flotilla.bearer` WebSocket subprotocol, or the
+/// deprecated `?token=` query). When neither Access nor a token is configured,
+/// the daemon is open (local dev) and the caller is recorded as anonymous.
+async fn auth(State(mgr): State<Arc<Manager>>, mut req: axum::extract::Request, next: Next) -> Response {
+    // 1. Cloudflare Access (preferred when configured).
+    if let Some(verifier) = &mgr.access {
+        if let Some(jwt) = access_jwt(&req) {
+            verifier.refresh_if_stale().await;
+            match verifier.verify(&jwt).await {
+                Ok(id) => {
+                    req.extensions_mut().insert(id);
+                    return next.run(req).await;
+                }
+                Err(e) => tracing::debug!("access: rejected jwt: {e}"),
+            }
+        }
+    }
+
+    // 2. Shared bearer token.
     let expected = &mgr.config.token;
-    if expected.is_empty() {
+    if !expected.is_empty() {
+        if let Some(provided) = bearer_token(&req) {
+            if provided == *expected {
+                req.extensions_mut().insert(Identity { email: "token".into(), via: "token" });
+                return next.run(req).await;
+            }
+        }
+    } else if mgr.access.is_none() {
+        // No auth configured at all → open (local dev).
+        req.extensions_mut().insert(Identity { email: "anonymous".into(), via: "open" });
         return next.run(req).await;
     }
-    let from_header = req
+
+    (StatusCode::UNAUTHORIZED, "authentication required").into_response()
+}
+
+/// Extract a Cloudflare Access JWT from the header or the `CF_Authorization` cookie.
+fn access_jwt(req: &axum::extract::Request) -> Option<String> {
+    if let Some(v) = req
+        .headers()
+        .get("cf-access-jwt-assertion")
+        .and_then(|v| v.to_str().ok())
+    {
+        return Some(v.to_string());
+    }
+    let cookies = req.headers().get(header::COOKIE).and_then(|v| v.to_str().ok())?;
+    for c in cookies.split(';') {
+        let c = c.trim();
+        if let Some(val) = c.strip_prefix("CF_Authorization=") {
+            return Some(val.to_string());
+        }
+    }
+    None
+}
+
+/// Extract the shared bearer token from the Authorization header, the
+/// `flotilla.bearer` WS subprotocol, or the deprecated `?token=` query.
+fn bearer_token(req: &axum::extract::Request) -> Option<String> {
+    if let Some(t) = req
         .headers()
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .and_then(|s| s.strip_prefix("Bearer "))
-        .map(|s| s.to_string());
-    let from_query = req.uri().query().and_then(|q| {
-        url_query(q).get("token").cloned()
-    });
-    let provided = from_header.or(from_query);
-    if provided.as_deref() == Some(expected.as_str()) {
-        next.run(req).await
-    } else {
-        (StatusCode::UNAUTHORIZED, "missing or invalid token").into_response()
+    {
+        return Some(t.to_string());
     }
+    if let Some(t) = ws_subprotocol_token(req) {
+        return Some(t);
+    }
+    // Deprecated: token in the query string (kept for backward compatibility).
+    req.uri()
+        .query()
+        .and_then(|q| url_query(q).get("token").cloned())
+}
+
+/// Parse the bearer token offered as a second value alongside `flotilla.bearer`
+/// in `Sec-WebSocket-Protocol`.
+fn ws_subprotocol_token(req: &axum::extract::Request) -> Option<String> {
+    let protos = req
+        .headers()
+        .get("sec-websocket-protocol")
+        .and_then(|v| v.to_str().ok())?;
+    let parts: Vec<&str> = protos.split(',').map(|s| s.trim()).collect();
+    if !parts.contains(&WS_BEARER_PROTO) {
+        return None;
+    }
+    parts
+        .into_iter()
+        .find(|p| *p != WS_BEARER_PROTO && !p.is_empty())
+        .map(|s| s.to_string())
 }
 
 fn url_query(q: &str) -> HashMap<String, String> {
@@ -171,6 +248,14 @@ fn url_query(q: &str) -> HashMap<String, String> {
             Some((it.next()?.to_string(), it.next().unwrap_or("").to_string()))
         })
         .collect()
+}
+
+/// The authenticated caller (Cloudflare Access email, or how the token auth'd).
+async fn me(ext: Option<Extension<Identity>>) -> impl IntoResponse {
+    match ext {
+        Some(Extension(id)) => Json(json!({ "email": id.email, "via": id.via })),
+        None => Json(json!({ "email": "anonymous", "via": "open" })),
+    }
 }
 
 async fn health(State(mgr): State<Arc<Manager>>) -> impl IntoResponse {
@@ -278,7 +363,10 @@ async fn ws_attach(
     let Some(session) = mgr.get(&id) else {
         return (StatusCode::NOT_FOUND, "no such session").into_response();
     };
-    ws.on_upgrade(move |socket| handle_attach(socket, session))
+    // If the client offered the bearer subprotocol, select it so the handshake
+    // completes (browsers abort a WS whose offered protocol isn't echoed back).
+    ws.protocols([WS_BEARER_PROTO])
+        .on_upgrade(move |socket| handle_attach(socket, session))
 }
 
 /// Bidirectional bridge between a WebSocket client (xterm.js or the TUI) and the

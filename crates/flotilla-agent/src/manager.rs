@@ -7,11 +7,14 @@ use std::sync::Arc;
 
 use web_push::SubscriptionInfo;
 
+use crate::access::AccessVerifier;
 use crate::config::Config;
 use crate::pty::{Backend, Session, SessionInfo};
 
 pub struct Manager {
     pub config: Config,
+    /// Cloudflare Access verifier (Phase 4); `None` when Access is disabled.
+    pub access: Option<AccessVerifier>,
     sessions: RwLock<HashMap<String, Arc<Session>>>,
     /// Web Push subscriptions (Phase 3), persisted to disk so they survive
     /// restarts.
@@ -24,8 +27,10 @@ impl Manager {
             tracing::warn!("could not create data dir {:?}: {e}", config.data_dir);
         }
         let push_subs = Self::load_push_subs(&config);
+        let access = AccessVerifier::from_config(&config.access);
         let mgr = Arc::new(Manager {
             config,
+            access,
             sessions: RwLock::new(HashMap::new()),
             push_subs: RwLock::new(push_subs),
         });

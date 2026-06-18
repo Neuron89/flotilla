@@ -1,6 +1,7 @@
 //! flotilla-agent — per-host daemon that owns AI-agent PTY sessions and exposes
 //! them over HTTP/WebSocket for the Flotilla fleet control plane.
 
+mod access;
 mod api;
 mod config;
 mod manager;
@@ -67,14 +68,21 @@ async fn main() -> Result<()> {
     let label = cfg.label();
     let token_on = !cfg.token.is_empty();
     let manager = manager::Manager::new(cfg);
+    if let Some(verifier) = &manager.access {
+        verifier.warm().await;
+    }
     notify::spawn_watcher(Arc::clone(&manager));
     let app = api::router(Arc::clone(&manager));
 
+    let access_on = manager.access.is_some();
+    let auth_mode = match (access_on, token_on) {
+        (true, true) => "cloudflare-access + token",
+        (true, false) => "cloudflare-access",
+        (false, true) => "token",
+        (false, false) => "off",
+    };
     let listener = tokio::net::TcpListener::bind(&bind).await?;
-    tracing::info!(
-        "flotilla-agent '{label}' listening on http://{bind}  (auth: {})",
-        if token_on { "token" } else { "off" }
-    );
+    tracing::info!("flotilla-agent '{label}' listening on http://{bind}  (auth: {auth_mode})");
     tracing::info!("profiles: {}", manager.config.profiles.iter().map(|p| p.name.as_str()).collect::<Vec<_>>().join(", "));
 
     axum::serve(listener, app).await?;

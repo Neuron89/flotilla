@@ -81,6 +81,7 @@
   <h1>⚓ FLOTILLA</h1>
   <span class="hint" id="status"></span>
   <span class="spacer"></span>
+  <span class="hint" id="whoami" style="margin-right:8px"></span>
   <input id="filter" placeholder="filter name/tag…" style="max-width:170px" />
   <button id="newBtn">+ Session</button>
   <button id="tplBtn">Templates</button>
@@ -263,8 +264,11 @@ function attach(host, s) {
   term.open($("term"));
   fit.fit();
 
-  const wsUrl = host.url.replace(/^http/, "ws") + `/api/sessions/${s.id}/attach` + (host.token ? `?token=${encodeURIComponent(host.token)}` : "");
-  ws = new WebSocket(wsUrl);
+  // Carry the token in the WS subprotocol (not the URL — query strings leak into
+  // logs). Behind Cloudflare Access no token is needed: the CF_Authorization
+  // cookie rides the upgrade automatically.
+  const wsUrl = host.url.replace(/^http/, "ws") + `/api/sessions/${s.id}/attach`;
+  ws = host.token ? new WebSocket(wsUrl, ["flotilla.bearer", host.token]) : new WebSocket(wsUrl);
   ws.binaryType = "arraybuffer";
   ws.onopen = () => sendResize();
   ws.onmessage = (ev) => {
@@ -517,6 +521,15 @@ async function togglePush() {
 $("pushBtn").onclick = togglePush;
 
 registerSW().then(updatePushButton);
+
+// Show who Cloudflare Access (or the token) authenticated us as.
+async function whoami() {
+  try {
+    const me = await api(originHost(), "/api/me");
+    $("whoami").textContent = me && me.via === "access" ? `👤 ${me.email}` : "";
+  } catch { $("whoami").textContent = ""; }
+}
+whoami();
 
 refresh();
 setInterval(() => { if (!active) refresh(); }, 5000); // auto-refresh fleet when not attached
