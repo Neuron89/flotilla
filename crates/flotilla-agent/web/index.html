@@ -83,6 +83,7 @@
   <span class="spacer"></span>
   <input id="filter" placeholder="filter name/tag…" style="max-width:170px" />
   <button id="newBtn">+ Session</button>
+  <button id="tplBtn">Templates</button>
   <button id="hostsBtn">Hosts</button>
   <button id="refreshBtn">↻</button>
 </header>
@@ -123,6 +124,20 @@
   <div class="row"><label>URL</label><input id="hUrl" placeholder="http://work-server.tailnet:7878" /></div>
   <div class="row"><label>Token (optional)</label><input id="hToken" placeholder="" /></div>
   <div class="actions"><button onclick="hostsDlg.close()">Close</button><button class="primary" id="addHostBtn">Add host</button></div>
+</dialog>
+
+<dialog id="tplDlg">
+  <h3>Templates</h3>
+  <div class="hint" style="margin-bottom:10px">Spawn a named set of sessions across hosts in one tap.</div>
+  <div id="tplList"></div>
+  <hr style="border:none;border-top:1px solid var(--line);margin:14px 0" />
+  <div class="row"><label>New template name</label><input id="tplName" placeholder="ai-fleet" /></div>
+  <div class="hint" style="margin-bottom:6px">Items (each spawns one session):</div>
+  <div id="tplItems"></div>
+  <div class="actions" style="justify-content:flex-start;margin-bottom:12px">
+    <button id="tplAddItem">+ Add item</button>
+  </div>
+  <div class="actions"><button onclick="tplDlg.close()">Close</button><button class="primary" id="tplSave">Save template</button></div>
 </dialog>
 
 <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
@@ -356,6 +371,84 @@ $("addHostBtn").onclick = () => {
   $("hLabel").value = $("hUrl").value = $("hToken").value = "";
   renderHostList(); refresh();
 };
+
+// ---- Templates (Phase 3) ----
+// A template is { name, items: [{ host(label), profile, name?, tags:[] }] }.
+// Launching it fans out POST /api/sessions to each item's host at once.
+const TPL_KEY = "flotilla.templates";
+function loadTemplates() { try { return JSON.parse(localStorage.getItem(TPL_KEY)) || []; } catch { return []; } }
+function saveTemplates(t) { localStorage.setItem(TPL_KEY, JSON.stringify(t)); }
+let templates = loadTemplates();
+
+$("tplBtn").onclick = () => { renderTemplateList(); $("tplItems").innerHTML = ""; addTemplateItemRow(); tplDlg.showModal(); };
+
+function renderTemplateList() {
+  const el = $("tplList"); el.innerHTML = "";
+  if (templates.length === 0) {
+    const e = document.createElement("div"); e.className = "hint"; e.textContent = "No templates yet — build one below."; el.appendChild(e); return;
+  }
+  templates.forEach((t, i) => {
+    const row = document.createElement("div"); row.className = "sess";
+    const summary = (t.items || []).map(it => `${it.host}·${it.profile}`).join(", ");
+    row.innerHTML = `<span class="nm">${escapeHtml(t.name)} <small>${escapeHtml(summary)}</small></span>`;
+    const go = document.createElement("button"); go.className = "primary"; go.textContent = "▶ Launch";
+    go.onclick = () => launchTemplate(t);
+    const del = document.createElement("button"); del.textContent = "✕";
+    del.onclick = () => { templates.splice(i, 1); saveTemplates(templates); renderTemplateList(); };
+    row.appendChild(go); row.appendChild(del); el.appendChild(row);
+  });
+}
+
+function addTemplateItemRow(item) {
+  const wrap = document.createElement("div");
+  wrap.className = "row"; wrap.style.flexDirection = "row"; wrap.style.gap = "6px"; wrap.style.alignItems = "center";
+  const hostSel = document.createElement("select"); hostSel.className = "tplHost"; hostSel.style.flex = "1";
+  hosts.forEach(h => { const o = document.createElement("option"); o.value = h.label; o.textContent = h.label; hostSel.appendChild(o); });
+  if (item) hostSel.value = item.host;
+  const prof = document.createElement("input"); prof.className = "tplProfile"; prof.placeholder = "profile"; prof.style.flex = "1"; prof.style.maxWidth = "110px";
+  if (item) prof.value = item.profile;
+  const tags = document.createElement("input"); tags.className = "tplTags"; tags.placeholder = "tags"; tags.style.flex = "1"; tags.style.maxWidth = "110px";
+  if (item) tags.value = (item.tags || []).join(", ");
+  const rm = document.createElement("button"); rm.textContent = "✕"; rm.onclick = () => wrap.remove();
+  wrap.appendChild(hostSel); wrap.appendChild(prof); wrap.appendChild(tags); wrap.appendChild(rm);
+  $("tplItems").appendChild(wrap);
+}
+$("tplAddItem").onclick = () => addTemplateItemRow();
+
+$("tplSave").onclick = () => {
+  const name = $("tplName").value.trim();
+  if (!name) return alert("Template name required");
+  const items = [];
+  $("tplItems").querySelectorAll(".row").forEach(r => {
+    const host = r.querySelector(".tplHost")?.value;
+    const profile = r.querySelector(".tplProfile")?.value.trim();
+    const tags = (r.querySelector(".tplTags")?.value || "").split(",").map(t => t.trim()).filter(Boolean);
+    if (host && profile) items.push({ host, profile, tags });
+  });
+  if (items.length === 0) return alert("Add at least one item (host + profile)");
+  templates.push({ name, items }); saveTemplates(templates);
+  $("tplName").value = ""; $("tplItems").innerHTML = ""; addTemplateItemRow();
+  renderTemplateList();
+};
+
+async function launchTemplate(t) {
+  let ok = 0; const errs = [];
+  for (const it of (t.items || [])) {
+    const host = hosts.find(h => h.label === it.host);
+    if (!host) { errs.push(`unknown host ${it.host}`); continue; }
+    try {
+      await api(host, "/api/sessions", { method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ profile: it.profile, name: it.name || undefined, tags: it.tags || [] }) });
+      ok++;
+    } catch (e) { errs.push(`${it.host}/${it.profile}: ${e.message}`); }
+  }
+  tplDlg.close();
+  $("status").textContent = errs.length
+    ? `template '${t.name}': ${ok}/${t.items.length} ok — ${errs.join("; ")}`
+    : `template '${t.name}' launched: ${ok} session(s)`;
+  await refresh();
+}
 
 refresh();
 setInterval(() => { if (!active) refresh(); }, 5000); // auto-refresh fleet when not attached

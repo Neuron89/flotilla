@@ -14,30 +14,58 @@ pub struct Host {
     pub token: String,
 }
 
+/// One member of a template: a session to spawn on a named host.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TemplateItem {
+    /// Host `label` this session is spawned on (matches a `[[hosts]]` entry).
+    pub host: String,
+    /// Profile to launch on that host.
+    pub profile: String,
+    /// Optional explicit session name.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// Optional tags applied to the spawned session.
+    #[serde(default)]
+    pub tags: Vec<String>,
+}
+
+/// A named set of sessions spawned across hosts in one action (Phase 3).
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct Template {
+    pub name: String,
+    #[serde(default)]
+    pub items: Vec<TemplateItem>,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct HostsFile {
     #[serde(default)]
     pub hosts: Vec<Host>,
+    #[serde(default)]
+    pub templates: Vec<Template>,
 }
 
 impl HostsFile {
-    /// Load the hosts list. Falls back to a single local agent if absent.
-    pub fn load(path: Option<&Path>) -> Result<Vec<Host>> {
+    /// Load hosts + templates. Falls back to a single local agent if absent.
+    pub fn load(path: Option<&Path>) -> Result<HostsFile> {
         if let Some(p) = path {
             if p.exists() {
                 let text = std::fs::read_to_string(p)
                     .with_context(|| format!("reading {}", p.display()))?;
                 let hf: HostsFile = toml::from_str(&text)?;
                 if !hf.hosts.is_empty() {
-                    return Ok(hf.hosts);
+                    return Ok(hf);
                 }
             }
         }
-        Ok(vec![Host {
-            label: "local".into(),
-            url: "http://127.0.0.1:7878".into(),
-            token: String::new(),
-        }])
+        Ok(HostsFile {
+            hosts: vec![Host {
+                label: "local".into(),
+                url: "http://127.0.0.1:7878".into(),
+                token: String::new(),
+            }],
+            templates: Vec::new(),
+        })
     }
 }
 
@@ -119,9 +147,24 @@ impl Client {
     }
 
     pub async fn create(&self, host: &Host, profile: &str) -> Result<SessionInfo> {
+        self.create_full(host, profile, None, &[]).await
+    }
+
+    /// Spawn with an optional explicit name and tags (used by templates).
+    pub async fn create_full(
+        &self,
+        host: &Host,
+        profile: &str,
+        name: Option<&str>,
+        tags: &[String],
+    ) -> Result<SessionInfo> {
+        let mut body = serde_json::json!({ "profile": profile, "tags": tags });
+        if let Some(n) = name {
+            body["name"] = serde_json::Value::String(n.to_string());
+        }
         Ok(self
             .req(host, reqwest::Method::POST, "/api/sessions")
-            .json(&serde_json::json!({ "profile": profile }))
+            .json(&body)
             .send()
             .await?
             .error_for_status()?

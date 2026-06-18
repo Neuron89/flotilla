@@ -23,3 +23,26 @@ token = ""
 label = "desktop"
 url = "http://desktop:7878"
 token = ""
+
+# ---- Templates (Phase 3) ---------------------------------------------------
+# A template spawns a named set of sessions across hosts in one action. In the
+# TUI press `t` to pick one and launch it; the web client has a Templates dialog.
+# Each item targets a host by its `label` above.
+
+[[templates]]
+name = "ai-fleet"
+[[templates.items]]
+host = "home-server"
+profile = "claude"
+tags = ["fleet"]
+[[templates.items]]
+host = "work-server"
+profile = "hermes"
+tags = ["fleet"]
+
+[[templates]]
+name = "dev-laptop"
+[[templates.items]]
+host = "laptop-cachy"
+profile = "claude"
+name = "scratch"

@@ -7,7 +7,7 @@
 mod client;
 
 use anyhow::Result;
-use client::{Client, Host, HostsFile, ProfileInfo, SessionInfo};
+use client::{Client, Host, HostsFile, ProfileInfo, SessionInfo, Template};
 use clap::Parser;
 use crossterm::{
     event::{Event, EventStream, KeyCode, KeyEventKind, KeyModifiers},
@@ -42,10 +42,12 @@ struct HostStatus {
 enum Mode {
     Normal,
     NewSession { host_idx: usize, profiles: Vec<ProfileInfo>, sel: usize },
+    Templates { sel: usize },
 }
 
 struct App {
     hosts: Vec<Host>,
+    templates: Vec<Template>,
     client: Client,
     rows: Vec<Row>,
     host_status: Vec<HostStatus>,
@@ -103,10 +105,11 @@ impl App {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
-    let hosts = HostsFile::load(args.config.as_deref())?;
+    let hf = HostsFile::load(args.config.as_deref())?;
 
     let mut app = App {
-        hosts,
+        hosts: hf.hosts,
+        templates: hf.templates,
         client: Client::new(),
         rows: Vec::new(),
         host_status: Vec::new(),
@@ -155,6 +158,13 @@ async fn run<B: Backend + Write>(terminal: &mut Terminal<B>, app: &mut App) -> R
                                 KeyCode::Down | KeyCode::Char('j') => app.move_sel(1),
                                 KeyCode::Char('r') => { app.status_msg = "refreshing…".into(); app.refresh().await; app.status_msg = "ready".into(); }
                                 KeyCode::Char('n') => open_new_session(app).await,
+                                KeyCode::Char('t') => {
+                                    if app.templates.is_empty() {
+                                        app.status_msg = "no templates defined (add [[templates]] to your hosts file)".into();
+                                    } else {
+                                        app.mode = Mode::Templates { sel: 0 };
+                                    }
+                                }
                                 KeyCode::Char('x') | KeyCode::Char('K') => kill_selected(app).await,
                                 KeyCode::Enter => {
                                     if let Some(row) = app.selected_row() {
@@ -175,6 +185,7 @@ async fn run<B: Backend + Write>(terminal: &mut Terminal<B>, app: &mut App) -> R
                             }
                         }
                         Mode::NewSession { .. } => handle_new_session_key(app, k.code).await,
+                        Mode::Templates { .. } => handle_templates_key(app, k.code).await,
                     }
                 }
             }
@@ -228,6 +239,58 @@ async fn handle_new_session_key(app: &mut App, code: KeyCode) {
         }
         _ => {}
     }
+}
+
+async fn handle_templates_key(app: &mut App, code: KeyCode) {
+    let len = app.templates.len();
+    match code {
+        KeyCode::Esc => app.mode = Mode::Normal,
+        KeyCode::Up | KeyCode::Char('k') => {
+            if let Mode::Templates { sel } = &mut app.mode {
+                if len > 0 { *sel = (*sel + len - 1) % len; }
+            }
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            if let Mode::Templates { sel } = &mut app.mode {
+                if len > 0 { *sel = (*sel + 1) % len; }
+            }
+        }
+        KeyCode::Enter => {
+            let sel = if let Mode::Templates { sel } = &app.mode { *sel } else { 0 };
+            app.mode = Mode::Normal;
+            launch_template(app, sel).await;
+            app.refresh().await;
+        }
+        _ => {}
+    }
+}
+
+/// Fan out a template's items, spawning each on its named host. Reports how many
+/// of the requested sessions came up.
+async fn launch_template(app: &mut App, idx: usize) {
+    let Some(tpl) = app.templates.get(idx).cloned() else { return };
+    let total = tpl.items.len();
+    let mut ok = 0usize;
+    let mut errs: Vec<String> = Vec::new();
+    for item in &tpl.items {
+        let Some(host) = app.hosts.iter().find(|h| h.label == item.host).cloned() else {
+            errs.push(format!("unknown host '{}'", item.host));
+            continue;
+        };
+        match app
+            .client
+            .create_full(&host, &item.profile, item.name.as_deref(), &item.tags)
+            .await
+        {
+            Ok(_) => ok += 1,
+            Err(e) => errs.push(format!("{}/{}: {e}", item.host, item.profile)),
+        }
+    }
+    app.status_msg = if errs.is_empty() {
+        format!("template '{}' launched: {ok}/{total} sessions", tpl.name)
+    } else {
+        format!("template '{}': {ok}/{total} ok — {}", tpl.name, errs.join("; "))
+    };
 }
 
 async fn kill_selected(app: &mut App) {
@@ -312,6 +375,7 @@ fn ui(f: &mut Frame, app: &App) {
         Span::styled(" ↑↓/jk ", Style::default().fg(Color::Rgb(79, 140, 255))), Span::raw("move  "),
         Span::styled("⏎ ", Style::default().fg(Color::Rgb(79, 140, 255))), Span::raw("attach  "),
         Span::styled("n ", Style::default().fg(Color::Rgb(79, 140, 255))), Span::raw("new  "),
+        Span::styled("t ", Style::default().fg(Color::Rgb(79, 140, 255))), Span::raw("template  "),
         Span::styled("x ", Style::default().fg(Color::Rgb(79, 140, 255))), Span::raw("kill  "),
         Span::styled("r ", Style::default().fg(Color::Rgb(79, 140, 255))), Span::raw("refresh  "),
         Span::styled("q ", Style::default().fg(Color::Rgb(79, 140, 255))), Span::raw("quit   "),
@@ -339,6 +403,35 @@ fn ui(f: &mut Frame, app: &App) {
         let list = List::new(items)
             .block(Block::default().borders(Borders::ALL).title(format!(" new session on {host_label}  (⏎ create, esc cancel) ")).border_style(Style::default().fg(Color::Rgb(79, 140, 255))))
             .highlight_style(Style::default().bg(Color::Rgb(79, 140, 255)).fg(Color::Black))
+            .highlight_symbol("▌");
+        f.render_stateful_widget(list, area, &mut pstate);
+    }
+
+    // Templates popup
+    if let Mode::Templates { sel } = &app.mode {
+        let area = centered_rect(56, 60, f.area());
+        f.render_widget(Clear, area);
+        let items: Vec<ListItem> = app
+            .templates
+            .iter()
+            .map(|t| {
+                let summary = t
+                    .items
+                    .iter()
+                    .map(|i| format!("{}·{}", i.host, i.profile))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                ListItem::new(Line::from(vec![
+                    Span::styled(format!("{:<16}", t.name), Style::default().add_modifier(Modifier::BOLD)),
+                    Span::styled(format!("{} session(s): {summary}", t.items.len()), Style::default().fg(Color::DarkGray)),
+                ]))
+            })
+            .collect();
+        let mut pstate = ListState::default();
+        pstate.select(Some(*sel));
+        let list = List::new(items)
+            .block(Block::default().borders(Borders::ALL).title(" launch template  (⏎ launch across hosts, esc cancel) ").border_style(Style::default().fg(Color::Rgb(74, 217, 145))))
+            .highlight_style(Style::default().bg(Color::Rgb(74, 217, 145)).fg(Color::Black))
             .highlight_symbol("▌");
         f.render_stateful_widget(list, area, &mut pstate);
     }
