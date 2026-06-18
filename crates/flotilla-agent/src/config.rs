@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use crate::pty::Backend;
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Config {
     /// Address to bind the HTTP/WS server to. Default 0.0.0.0:7878 (tailnet-facing).
@@ -113,6 +115,23 @@ pub struct Profile {
     /// Human description shown in the UIs.
     #[serde(default)]
     pub description: Option<String>,
+    /// Session backend: "pty" (default, daemon owns the PTY) or "tmux"
+    /// (restart-proof, Linux/macOS). Ignored on Windows, which always uses pty.
+    #[serde(default)]
+    pub backend: Backend,
+}
+
+impl Profile {
+    /// The backend actually used, accounting for platform support. tmux is not
+    /// available on Windows, so a tmux profile transparently falls back to pty
+    /// there rather than failing to spawn.
+    pub fn effective_backend(&self) -> Backend {
+        if cfg!(windows) {
+            Backend::Pty
+        } else {
+            self.backend
+        }
+    }
 }
 
 fn default_bind() -> String {
@@ -150,6 +169,7 @@ fn default_profiles() -> Vec<Profile> {
         cwd: None,
         env: HashMap::new(),
         description: Some("Native interactive shell".into()),
+        backend: Backend::Pty,
     };
     let claude = Profile {
         name: "claude".into(),
@@ -158,6 +178,7 @@ fn default_profiles() -> Vec<Profile> {
         cwd: None,
         env: HashMap::new(),
         description: Some("Claude Code session (inherits user-scope MCP incl. Obsidian KB)".into()),
+        backend: Backend::Pty,
     };
     let hermes = Profile {
         name: "hermes".into(),
@@ -166,6 +187,7 @@ fn default_profiles() -> Vec<Profile> {
         cwd: None,
         env: HashMap::new(),
         description: Some("Hermes agent session".into()),
+        backend: Backend::Pty,
     };
     vec![shell, claude, hermes]
 }

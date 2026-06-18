@@ -222,11 +222,12 @@ glance tells you *which* box and *which* agent is blocked.
 
 ## ⚠️ Limitations
 
-- **No live-session survival across daemon restart.** The daemon owns the PTYs,
-  so if it restarts, its sessions end. *Mitigations:* run it as a service (rare
-  restarts); a metadata snapshot is written to `data_dir/sessions.json` for
-  audit. A future tmux/Zellij backend on Linux hosts could add true
-  detach-survives-restart there.
+- **Restart survival is opt-in (the `tmux` backend).** With the default `pty`
+  backend the daemon owns the PTYs, so a restart ends its sessions. Set
+  `backend = "tmux"` on a profile (Linux/macOS) and the command runs inside a
+  detached tmux session instead — it **survives a daemon restart**: on boot the
+  agent re-adopts every `flotilla_*` tmux session and recovers its scrollback.
+  A metadata snapshot is also written to `data_dir/sessions.json`.
 - **`wss://` not enabled** in the TUI client — plain `ws://` over the tailnet
   (Tailscale already encrypts). Use the web client over HTTPS if you front it
   with a reverse proxy.
@@ -241,7 +242,7 @@ glance tells you *which* box and *which* agent is blocked.
 |:---:|:---:|---|
 | **1** | ✅ **Shipped** | agent + TUI + web client + deploy scripts |
 | **2** | ✅ **Shipped** | ntfy phone push when a session goes 🟡 `waiting` (or exits); per-session tags + fleet filter; deep-link tap-to-attach; installable PWA |
-| **3** | 💡 Future | optional tmux/Zellij backend on Linux for restart-proof sessions; session "templates" (spawn a named set across hosts at once); web push into the PWA |
+| **3** | 🚧 **In progress** | ✅ opt-in tmux backend (Linux/macOS) for restart-proof sessions; session "templates" (spawn a named set across hosts at once); web push into the PWA |
 
 <br/>
 

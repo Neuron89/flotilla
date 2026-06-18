@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::config::Config;
-use crate::pty::{Session, SessionInfo};
+use crate::pty::{Backend, Session, SessionInfo};
 
 pub struct Manager {
     pub config: Config,
@@ -18,10 +18,61 @@ impl Manager {
         if let Err(e) = std::fs::create_dir_all(&config.data_dir) {
             tracing::warn!("could not create data dir {:?}: {e}", config.data_dir);
         }
-        Arc::new(Manager {
+        let mgr = Arc::new(Manager {
             config,
             sessions: RwLock::new(HashMap::new()),
-        })
+        });
+        mgr.adopt_persisted();
+        mgr
+    }
+
+    /// On startup, re-adopt tmux-backed sessions that outlived the previous
+    /// daemon process. PTY-backed sessions cannot survive a restart, so stale
+    /// entries for them are simply dropped. This is the restart-proof payoff of
+    /// the tmux backend.
+    fn adopt_persisted(&self) {
+        let path = self.config.data_dir.join("sessions.json");
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            return;
+        };
+        let Ok(infos) = serde_json::from_str::<Vec<SessionInfo>>(&text) else {
+            tracing::warn!("could not parse {path:?}; skipping session adoption");
+            return;
+        };
+        let mut adopted = 0usize;
+        for info in infos {
+            if info.backend != Backend::Tmux {
+                continue;
+            }
+            let Some(profile) = self.config.profile(&info.profile) else {
+                tracing::warn!(
+                    "session '{}' references unknown profile '{}'; not adopting",
+                    info.name,
+                    info.profile
+                );
+                continue;
+            };
+            match Session::adopt_tmux(
+                info.id.clone(),
+                info.name.clone(),
+                info.tags.clone(),
+                profile,
+                info.created_at,
+                40,
+                120,
+            ) {
+                Ok(Some(session)) => {
+                    self.sessions.write().insert(info.id.clone(), session);
+                    adopted += 1;
+                }
+                Ok(None) => {} // tmux session gone — drop it
+                Err(e) => tracing::warn!("failed to adopt '{}': {e}", info.name),
+            }
+        }
+        if adopted > 0 {
+            tracing::info!("adopted {adopted} surviving tmux session(s) after restart");
+            self.persist();
+        }
     }
 
     pub fn create(&self, profile_name: &str, name: Option<String>, tags: Vec<String>, rows: u16, cols: u16) -> Result<SessionInfo> {

@@ -20,24 +20,36 @@ host_label = "home-server"
 # knowledge base is reached through Claude's *user-scope* MCP config, so a
 # plain `claude` profile already inherits it. Point `cwd` at the agent
 # workspace that holds your CLAUDE.md / .mcp.json if you keep one.
+#
+# backend (Phase 3): "pty" (default) or "tmux".
+#   pty  — the daemon owns the PTY directly. Simple, cross-platform, but the
+#          session ends if flotilla-agent restarts.
+#   tmux — the command runs in a detached tmux session and the daemon only
+#          owns a `tmux attach` PTY. The session SURVIVES a daemon restart:
+#          on boot the agent re-adopts every flotilla_* tmux session and
+#          recovers its scrollback. Linux/macOS only (requires tmux on PATH);
+#          falls back to pty on Windows automatically.
 
 [[profiles]]
 name = "claude"
 command = "claude"
 args = []
 # cwd = "/home/hnester/agent-workspace"   # holds CLAUDE.md + Obsidian MCP context
+backend = "tmux"                          # restart-proof; needs tmux installed
 description = "Claude Code (inherits user-scope MCP incl. Obsidian KB)"
 
 [[profiles]]
 name = "hermes"
 command = "hermes"
 args = []
+backend = "tmux"
 description = "Hermes agent"
 
 [[profiles]]
 name = "shell"
 command = "bash"
 args = ["-l"]
+# backend = "pty"                         # default; uncomment to be explicit
 description = "Login shell"
 
 # Example: a Claude session pinned to a specific repo with an injected env var.

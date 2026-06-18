@@ -81,6 +81,7 @@ pub async fn test_push(manager: &Manager) -> anyhow::Result<()> {
         tags: vec!["test".into()],
         state: crate::pty::State::Waiting,
         exit_code: None,
+        backend: crate::pty::Backend::Pty,
     };
     send(&reqwest::Client::new(), cfg, &manager.config.label(), &info).await
 }
