@@ -91,3 +91,19 @@ enabled = false
 private_key = ""                      # from --gen-vapid (URL-safe base64, no pad)
 public_key = ""                       # from --gen-vapid
 subject = "mailto:you@example.com"    # VAPID contact (mailto: or origin URL)
+
+# ---- Cloudflare Access auth (Phase 4) -------------------------------------
+# Front this agent with a Cloudflare Tunnel + an Access application and the
+# edge handles login (OAuth/OTP). This block validates the JWT Cloudflare
+# injects, so only users who passed the Access policy reach the daemon — with
+# per-user identity (shown in the UI / at /api/me). See
+# deploy/cloudflare-access-setup.md for the 10-minute setup.
+#
+# A request is admitted by EITHER a valid Access JWT (public tunnel / browser)
+# OR the bearer `token` above (TUI over the tailnet) — so both keep working.
+[access]
+enabled = false
+team_domain = "https://YOURTEAM.cloudflareaccess.com"   # your Zero Trust team domain
+aud = ""                              # Application Audience (AUD) tag from the Access app
+allowed_emails = []                   # optional extra allowlist, e.g. ["you@example.com"]
+                                      # empty = trust whoever the Access policy admits

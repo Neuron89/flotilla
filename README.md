@@ -11,7 +11,7 @@
 [![Network](https://img.shields.io/badge/Tailscale-tailnet-blueviolet?logo=tailscale&logoColor=white)](deploy/tailscale-setup.md)
 [![Clients](https://img.shields.io/badge/Clients-TUI%20%2B%20Web%2FPWA-0aa)](#components)
 [![License](https://img.shields.io/badge/License-MIT-yellow)](#license)
-[![Status](https://img.shields.io/badge/Phase%203-shipped%20✅-success)](#roadmap)
+[![Status](https://img.shields.io/badge/Phase%204-shipped%20✅-success)](#roadmap)
 
 </div>
 
@@ -162,7 +162,11 @@ Point the TUI at the **whole fleet** with a hosts file
 
 ## 🛰️ HTTP / WebSocket API
 
-All routes under `/api`. Bearer token optional — `Authorization: Bearer …` or `?token=`.
+All routes under `/api`. Auth (any one satisfies a request): a **Cloudflare
+Access** JWT (`Cf-Access-Jwt-Assertion` header or `CF_Authorization` cookie, →
+per-user identity) **or** the shared **bearer token** (`Authorization: Bearer`,
+the `flotilla.bearer` WebSocket subprotocol, or the deprecated `?token=`). Open
+when neither is configured (local dev). See [Securing Flotilla](deploy/cloudflare-access-setup.md).
 
 | Method | Path | Purpose |
 |:---:|---|---|
@@ -175,6 +179,7 @@ All routes under `/api`. Bearer token optional — `Authorization: Bearer …` o
 | `GET` | `/api/sessions/:id/buffer` | current scrollback (bytes) |
 | `GET` | `/api/sessions/:id/attach` | **WebSocket** — binary = PTY I/O; text JSON `{"type":"resize",…}` |
 | `POST` | `/api/notify-test` | fire a sample push (ntfy and/or web push) to verify config |
+| `GET` | `/api/me` | authenticated identity (`{email, via}`) |
 | `GET` | `/api/push/vapid` | VAPID public key for the browser to subscribe (404 if web push off) |
 | `POST` | `/api/push/subscribe` | register a browser PushSubscription |
 | `POST` | `/api/push/unsubscribe` | drop a subscription `{endpoint}` |
@@ -200,6 +205,9 @@ All routes under `/api`. Bearer token optional — `Authorization: Bearer …` o
    - 🪟 Windows — `./deploy/install-windows.ps1` (logon-triggered Scheduled Task)
 3. **[Wire shared memory](deploy/obsidian-shared-memory.md)** — point profile `cwd` at your agent workspace.
 4. Put every host's tailnet URL in `flotilla-hosts.toml` (and the web client's Hosts dialog).
+5. **(Recommended) [Secure it with Cloudflare Access](deploy/cloudflare-access-setup.md)** — a
+   tunnel + Access policy gives you HTTPS, a real login (OAuth/OTP), and per-user
+   identity, so the PWA is safe to reach from anywhere (and Web Push works).
 
 <br/>
 
@@ -249,9 +257,10 @@ For native notifications straight into the installed PWA — no ntfy app — ena
   detached tmux session instead — it **survives a daemon restart**: on boot the
   agent re-adopts every `flotilla_*` tmux session and recovers its scrollback.
   A metadata snapshot is also written to `data_dir/sessions.json`.
-- **`wss://` not enabled** in the TUI client — plain `ws://` over the tailnet
-  (Tailscale already encrypts). Use the web client over HTTPS if you front it
-  with a reverse proxy.
+- **TUI uses plain `ws://`** over the tailnet (Tailscale already encrypts); the
+  bearer token rides the `Sec-WebSocket-Protocol` header, not the URL. Front the
+  agent with a Cloudflare Tunnel / `tailscale serve` for end-to-end HTTPS (`wss://`)
+  to the browser — see [Securing Flotilla](deploy/cloudflare-access-setup.md).
 - **Heuristic status detection** — output recency + prompt-signature matching,
   not a semantic read of the agent.
 
@@ -264,7 +273,8 @@ For native notifications straight into the installed PWA — no ntfy app — ena
 | **1** | ✅ **Shipped** | agent + TUI + web client + deploy scripts |
 | **2** | ✅ **Shipped** | ntfy phone push when a session goes 🟡 `waiting` (or exits); per-session tags + fleet filter; deep-link tap-to-attach; installable PWA |
 | **3** | ✅ **Shipped** | opt-in tmux backend (Linux/macOS) for restart-proof sessions; session "templates" (spawn a named set across hosts at once); VAPID web push into the installed PWA |
-| **4** | 💡 Next | auto cloudflared tunnel per agent + Cloudflare Access (OAuth/OTP) at the edge with per-user identity; fix WS query-string token leak; optional Tauri desktop shell |
+| **4** | ✅ **Shipped** | Cloudflare Access (OAuth/OTP) at the edge with per-user identity (`/api/me`); cloudflared tunnel helper + setup guide; WS token moved out of the query string into the `flotilla.bearer` subprotocol |
+| **5** | 💡 Future | optional Tauri desktop shell (token in OS keychain); Android app; Cloudflare service-token auth for headless/TUI clients |
 
 <br/>
 
