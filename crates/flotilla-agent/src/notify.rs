@@ -120,6 +120,8 @@ async fn send(
         req = req.bearer_auth(&cfg.token);
     }
     if !cfg.public_url.is_empty() {
+        // Deep link carries ONLY the session id — never the bearer token. ntfy
+        // messages transit third-party infra and land in notification history.
         let click = format!("{}/?open={}", cfg.public_url.trim_end_matches('/'), info.id);
         req = req
             .header("Click", click.clone())

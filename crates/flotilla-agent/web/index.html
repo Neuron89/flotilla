@@ -8,83 +8,129 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <title>Flotilla</title>
 <link rel="manifest" href="/manifest.json" />
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='78' font-size='88'%3E%E2%9A%93%3C/text%3E%3C/svg%3E" />
+<link rel="stylesheet" href="/vendor/xterm.css" />
 <style>
   :root {
     --bg: #0b0f17; --panel: #121826; --panel2: #1a2233; --line: #243049;
     --txt: #e6edf7; --dim: #8b9bb4; --accent: #4f8cff;
-    --working: #ffb454; --waiting: #ff5d6c; --idle: #6b7a92; --exited: #455067; --ok: #4ad991;
+    --working: #4ad991; --waiting: #ffb454; --idle: #6b7a92; --exited: #455067;
+    --ok: #4ad991; --danger: #ff5d6c;
+    --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px;
+    --radius-sm: 6px; --radius-md: 10px; --radius-pill: 999px;
   }
   * { box-sizing: border-box; }
-  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--txt);
+  html, body { margin: 0; height: 100%; height: 100dvh; background: var(--bg); color: var(--txt);
     font: 14px/1.45 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
-  body { display: flex; flex-direction: column; }
-  header { display: flex; align-items: center; gap: 12px; padding: 10px 14px;
+  body { display: flex; flex-direction: column; overflow: hidden; }
+  header { display: flex; align-items: center; gap: var(--space-3);
+    padding: calc(var(--space-2) + env(safe-area-inset-top)) calc(var(--space-4) + env(safe-area-inset-right)) var(--space-2) calc(var(--space-4) + env(safe-area-inset-left));
     background: var(--panel); border-bottom: 1px solid var(--line); }
   header h1 { font-size: 16px; margin: 0; letter-spacing: .5px; }
   header .spacer { flex: 1; }
   button { background: var(--panel2); color: var(--txt); border: 1px solid var(--line);
-    border-radius: 8px; padding: 8px 12px; font-size: 13px; cursor: pointer; }
+    border-radius: var(--radius-sm); padding: var(--space-2) var(--space-3); font-size: 13px; cursor: pointer;
+    transition: background .15s ease, border-color .15s ease, transform .15s ease, opacity .15s ease; }
   button:hover { border-color: var(--accent); }
+  button:active { transform: scale(.96); }
   button.primary { background: var(--accent); border-color: var(--accent); color: #04101f; font-weight: 600; }
   select, input { background: var(--panel2); color: var(--txt); border: 1px solid var(--line);
-    border-radius: 8px; padding: 8px 10px; font-size: 13px; }
+    border-radius: var(--radius-sm); padding: var(--space-2) var(--space-2); font-size: 13px; }
   main { flex: 1; display: flex; min-height: 0; }
   #fleet { width: 340px; max-width: 42vw; overflow-y: auto; border-right: 1px solid var(--line);
-    background: var(--panel); padding: 8px; }
-  .host { margin-bottom: 12px; }
+    background: var(--panel); padding: var(--space-2);
+    scrollbar-width: thin; scrollbar-color: var(--line) var(--panel); }
+  #fleet::-webkit-scrollbar { width: 10px; }
+  #fleet::-webkit-scrollbar-track { background: var(--panel); }
+  #fleet::-webkit-scrollbar-thumb { background: var(--line); border-radius: var(--radius-pill); }
+  #fleet::-webkit-scrollbar-thumb:hover { background: var(--dim); }
+  .host { margin-bottom: var(--space-3); }
   .host h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: var(--dim);
-    margin: 6px 6px 4px; display: flex; align-items: center; gap: 8px; }
+    margin: var(--space-2) var(--space-2) var(--space-1); display: flex; align-items: center; gap: var(--space-2); }
   .host h2 .meta { font-weight: 400; text-transform: none; letter-spacing: 0; }
-  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; background: var(--idle); }
-  .dot.ok { background: var(--ok); } .dot.down { background: var(--waiting); }
-  .sess { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 8px;
-    cursor: pointer; border: 1px solid transparent; }
-  .sess:hover { background: var(--panel2); }
+  .host h2 .meta.alert { color: var(--danger); font-weight: 600; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; background: var(--idle);
+    transition: background .2s ease; }
+  .dot.ok { background: var(--ok); } .dot.down { background: var(--danger); }
+  .sess { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-sm); cursor: pointer; border: 1px solid transparent;
+    border-left: 3px solid transparent;
+    transition: background .15s ease, border-color .15s ease, transform .15s ease, box-shadow .15s ease, opacity .15s ease; }
+  .sess:hover { background: var(--panel2); box-shadow: 0 1px 8px rgba(0,0,0,.35); transform: translateX(2px); }
   .sess.active { background: var(--panel2); border-color: var(--accent); }
-  .sess .badge { font-size: 10px; padding: 2px 7px; border-radius: 999px; text-transform: uppercase;
+  .sess.working { border-left-color: var(--working); }
+  .sess.waiting { border-left-color: var(--waiting); }
+  .sess.idle { border-left-color: var(--idle); }
+  .sess.exited { border-left-color: var(--exited); opacity: .55; }
+  .sess .badge { font-size: 10px; padding: 2px 7px; border-radius: var(--radius-pill); text-transform: uppercase;
     letter-spacing: .5px; color: #04101f; font-weight: 700; }
   .badge.working { background: var(--working); } .badge.waiting { background: var(--waiting); }
-  .badge.idle { background: var(--idle); } .badge.exited { background: var(--exited); color: var(--dim); }
+  .badge.idle { background: var(--idle); color: var(--txt); } .badge.exited { background: var(--exited); color: var(--dim); }
   .sess .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .sess .nm small { color: var(--dim); }
-  .tag { font-size: 9px; padding: 1px 6px; border-radius: 999px; background: var(--line); color: var(--dim); margin-left: 4px; white-space: nowrap; }
-  #stage { flex: 1; display: flex; flex-direction: column; min-width: 0; background: #000; }
-  #termbar { display: flex; gap: 8px; align-items: center; padding: 8px 12px; background: var(--panel);
-    border-bottom: 1px solid var(--line); }
+  .tag { font-size: 9px; padding: 1px 6px; border-radius: var(--radius-pill); background: var(--line); color: var(--dim); margin-left: 4px; white-space: nowrap; }
+  #stage { flex: 1; display: flex; flex-direction: column; min-width: 0; background: var(--bg); }
+  #termbar { display: flex; gap: var(--space-2); align-items: center;
+    padding: var(--space-2) calc(var(--space-3) + env(safe-area-inset-right)) var(--space-2) calc(var(--space-3) + env(safe-area-inset-left));
+    background: var(--panel); border-bottom: 1px solid var(--line); }
   #termbar .title { flex: 1; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  #term { flex: 1; min-height: 0; padding: 6px; }
-  #promptbar { display: flex; gap: 8px; padding: 8px 12px; background: var(--panel); border-top: 1px solid var(--line); }
+  .conn-dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; background: var(--idle);
+    flex-shrink: 0; transition: background .2s ease; }
+  .conn-dot.connecting { background: var(--waiting); }
+  .conn-dot.live { background: var(--working); }
+  .conn-dot.lost { background: var(--danger); }
+  #term { flex: 1; min-height: 0; padding: var(--space-1); }
+  #promptbar { display: flex; gap: var(--space-2);
+    padding: var(--space-2) calc(var(--space-3) + env(safe-area-inset-right)) calc(var(--space-2) + env(safe-area-inset-bottom)) calc(var(--space-3) + env(safe-area-inset-left));
+    background: var(--panel); border-top: 1px solid var(--line); }
   #promptbar input { flex: 1; }
   #empty { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--dim);
-    flex-direction: column; gap: 8px; text-align: center; padding: 20px; }
-  dialog { background: var(--panel); color: var(--txt); border: 1px solid var(--line); border-radius: 12px;
+    flex-direction: column; gap: var(--space-2); text-align: center; padding: 20px; }
+  dialog { background: var(--panel); color: var(--txt); border: 1px solid var(--line); border-radius: var(--radius-md);
     padding: 18px; min-width: 300px; }
-  dialog::backdrop { background: rgba(0,0,0,.6); }
-  dialog h3 { margin: 0 0 12px; }
-  dialog .row { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
+  dialog[open] { animation: dlgIn .15s ease; }
+  dialog::backdrop { background: rgba(0,0,0,.6); animation: backdropIn .15s ease; }
+  @keyframes dlgIn { from { opacity: 0; transform: scale(.96); } to { opacity: 1; transform: scale(1); } }
+  @keyframes backdropIn { from { opacity: 0; } to { opacity: 1; } }
+  dialog h3 { margin: 0 0 var(--space-3); }
+  dialog .row { display: flex; flex-direction: column; gap: 4px; margin-bottom: var(--space-3); }
   dialog label { font-size: 12px; color: var(--dim); }
-  dialog .actions { display: flex; justify-content: flex-end; gap: 8px; }
+  dialog .actions { display: flex; justify-content: flex-end; gap: var(--space-2); }
   .hint { color: var(--dim); font-size: 12px; }
+  #status { background: var(--panel2); border: 1px solid var(--line); padding: 4px 10px;
+    border-radius: var(--radius-pill); font-size: 11px; white-space: nowrap; }
+  #toasts { position: fixed; right: calc(var(--space-3) + env(safe-area-inset-right));
+    bottom: calc(var(--space-3) + env(safe-area-inset-bottom)); display: flex; flex-direction: column;
+    gap: var(--space-2); z-index: 50; max-width: 320px; }
+  .toast { background: var(--panel2); border: 1px solid var(--line); border-left: 3px solid var(--accent);
+    padding: 10px 14px; border-radius: var(--radius-md); font-size: 13px; box-shadow: 0 4px 20px rgba(0,0,0,.4);
+    opacity: 0; transform: translateY(8px); transition: opacity .2s ease, transform .2s ease; }
+  .toast.show { opacity: 1; transform: translateY(0); }
+  .toast.error { border-left-color: var(--danger); }
+  .toast.success { border-left-color: var(--working); }
+  #fleetBackdrop { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 4;
+    opacity: 0; transition: opacity .2s ease; pointer-events: none; }
+  #menuBtn { display: none; }
   @media (max-width: 720px) {
     #fleet { position: absolute; z-index: 5; height: calc(100% - 49px); width: 86%; max-width: 86%;
       transform: translateX(-105%); transition: transform .2s; box-shadow: 0 0 40px rgba(0,0,0,.6); }
     #fleet.open { transform: translateX(0); }
     #menuBtn { display: inline-flex; }
+    #fleetBackdrop.show { display: block; opacity: 1; pointer-events: auto; }
+    button.iconbtn, #menuBtn, #refreshBtn { min-width: 44px; min-height: 44px; }
   }
-  #menuBtn { display: none; }
 </style>
 </head>
 <body>
 <header>
-  <button id="menuBtn">☰</button>
+  <button id="menuBtn" class="iconbtn" title="Toggle host list" aria-label="Toggle host list">☰</button>
   <h1>⚓ FLOTILLA</h1>
-  <span class="hint" id="status"></span>
+  <span id="status"></span>
   <span class="spacer"></span>
-  <input id="filter" placeholder="filter name/tag…" style="max-width:170px" />
+  <input id="filter" placeholder="filter name/tag…" style="max-width:170px" aria-label="Filter sessions by name or tag" />
   <button id="newBtn">+ Session</button>
   <button id="hostsBtn">Hosts</button>
-  <button id="refreshBtn">↻</button>
+  <button id="refreshBtn" class="iconbtn" title="Refresh" aria-label="Refresh">↻</button>
 </header>
 <main>
   <aside id="fleet"></aside>
@@ -93,8 +139,12 @@
       <div style="font-size:32px">⚓</div>
       <div>Select a session to attach, or add a host.</div>
       <div class="hint">Your phone reaches every box over the Tailscale tailnet.</div>
+      <button id="emptyAddHostBtn" class="primary">+ Add a host</button>
     </div>
     <div id="termbar" style="display:none">
+      <span class="conn-dot" id="connDot" title="Connection status"></span>
+      <span class="hint" id="connLabel"></span>
+      <button id="reconnectBtn" style="display:none">Reconnect</button>
       <span class="title" id="termTitle"></span>
       <button id="killBtn">Kill</button>
       <button id="detachBtn">Detach</button>
@@ -125,8 +175,17 @@
   <div class="actions"><button onclick="hostsDlg.close()">Close</button><button class="primary" id="addHostBtn">Add host</button></div>
 </dialog>
 
-<script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
+<dialog id="confirmDlg">
+  <h3 id="confirmTitle">Confirm</h3>
+  <div id="confirmMsg" class="hint" style="margin-bottom:12px"></div>
+  <div class="actions"><button id="confirmCancel">Cancel</button><button class="primary" id="confirmOk">Confirm</button></div>
+</dialog>
+
+<div id="toasts"></div>
+<div id="fleetBackdrop"></div>
+
+<script src="/vendor/xterm.js"></script>
+<script src="/vendor/xterm-addon-fit.js"></script>
 <script>
 const LS_KEY = "flotilla.hosts";
 
@@ -153,57 +212,107 @@ let hosts = loadHosts();
 let active = null; // {host, session}
 let pendingOpen = new URLSearchParams(location.search).get("open"); // deep link from notification
 let ws = null, term = null, fit = null;
+let fleetCache = []; // parallel to `hosts`: { ok, meta, sessions, err } — for client-side filtering w/o refetch
+
+// ---- ws lifecycle guards ----
+let attachGen = 0;      // bumped on every attach()/detach so stale ws/timer handlers become no-ops
+let wsGen = 0;           // gen the *current* ws belongs to
+let intentionalClose = false;
+let reconnectAttempts = 0;
+let reconnectTimer = null;
 
 const $ = (id) => document.getElementById(id);
 
+// ---- toast + confirm helpers (replace blocking alert()/confirm()) ----
+function toast(msg, kind = "info", ms = 4000) {
+  const container = $("toasts");
+  const el = document.createElement("div");
+  el.className = "toast " + kind;
+  el.textContent = msg;
+  container.appendChild(el);
+  requestAnimationFrame(() => el.classList.add("show"));
+  setTimeout(() => {
+    el.classList.remove("show");
+    setTimeout(() => el.remove(), 300);
+  }, ms);
+}
+
+function confirmDialog(message, okLabel = "Confirm") {
+  return new Promise((resolve) => {
+    $("confirmMsg").textContent = message;
+    $("confirmOk").textContent = okLabel;
+    const onOk = () => { cleanup(); resolve(true); };
+    const onCancel = () => { cleanup(); resolve(false); };
+    function cleanup() {
+      confirmDlg.close();
+      $("confirmOk").removeEventListener("click", onOk);
+      $("confirmCancel").removeEventListener("click", onCancel);
+      confirmDlg.removeEventListener("cancel", onCancel);
+    }
+    $("confirmOk").addEventListener("click", onOk);
+    $("confirmCancel").addEventListener("click", onCancel);
+    confirmDlg.addEventListener("cancel", onCancel);
+    confirmDlg.showModal();
+  });
+}
+
+// ---- fleet fetch/render ----
 async function refresh() {
+  const results = await Promise.all(hosts.map(async (host) => {
+    try {
+      const health = await api(host, "/api/health");
+      const sessions = await api(host, "/api/sessions");
+      return { ok: true, meta: `${health.os}/${health.arch}`, sessions };
+    } catch (e) {
+      return { ok: false, err: "unreachable", sessions: [] };
+    }
+  }));
+  fleetCache = results;
+  renderFleet();
+
+  // Deep link from a notification tap: ?open=<session-id> → auto-attach.
+  if (pendingOpen) {
+    for (let i = 0; i < hosts.length; i++) {
+      const hit = (results[i].sessions || []).find(s => s.id === pendingOpen);
+      if (hit) { pendingOpen = null; attach(hosts[i], hit); break; }
+    }
+  }
+}
+
+// Re-render from the cached fleet (no network) — used for client-side filtering.
+function renderFleet() {
   const fleet = $("fleet");
   fleet.innerHTML = "";
   let total = 0;
-  const found = [];
-  for (const host of hosts) {
+  hosts.forEach((host, i) => {
+    const r = fleetCache[i] || { ok: false, sessions: [] };
     const div = document.createElement("div");
     div.className = "host";
     const h2 = document.createElement("h2");
-    const dot = document.createElement("span"); dot.className = "dot";
+    const dot = document.createElement("span"); dot.className = "dot" + (r.ok ? " ok" : " down");
     h2.appendChild(dot);
     const label = document.createElement("span"); label.textContent = host.label;
     h2.appendChild(label);
-    const meta = document.createElement("span"); meta.className = "meta";
+    const meta = document.createElement("span"); meta.className = "meta" + (r.ok ? "" : " alert");
+    meta.textContent = r.ok ? r.meta : "unreachable";
     h2.appendChild(meta);
     div.appendChild(h2);
     fleet.appendChild(div);
 
-    try {
-      const health = await api(host, "/api/health");
-      dot.classList.add("ok");
-      meta.textContent = `${health.os}/${health.arch}`;
-      const sessions = await api(host, "/api/sessions");
-      total += sessions.length;
-      for (const s of sessions) found.push({ host, s });
-      const vis = sessions.filter(matchesFilter);
-      if (sessions.length === 0) {
-        const e = document.createElement("div"); e.className = "hint"; e.style.padding = "0 10px 6px";
-        e.textContent = "no sessions"; div.appendChild(e);
-      }
-      for (const s of vis) div.appendChild(sessionRow(host, s));
-    } catch (e) {
-      dot.classList.add("down");
-      meta.textContent = "unreachable";
+    const sessions = r.sessions || [];
+    total += sessions.length;
+    if (r.ok && sessions.length === 0) {
+      const e = document.createElement("div"); e.className = "hint"; e.style.padding = "0 10px 6px";
+      e.textContent = "no sessions"; div.appendChild(e);
     }
-  }
+    sessions.filter(matchesFilter).forEach(s => div.appendChild(sessionRow(host, s)));
+  });
   $("status").textContent = `${hosts.length} host(s) · ${total} session(s)`;
-
-  // Deep link from a notification tap: ?open=<session-id> → auto-attach.
-  if (pendingOpen) {
-    const hit = found.find(r => r.s.id === pendingOpen);
-    if (hit) { pendingOpen = null; attach(hit.host, hit.s); }
-  }
 }
 
 function sessionRow(host, s) {
   const row = document.createElement("div");
-  row.className = "sess";
+  row.className = "sess " + s.state;
   if (active && active.host.url === host.url && active.session.id === s.id) row.classList.add("active");
   const badge = document.createElement("span");
   badge.className = "badge " + s.state;
@@ -230,64 +339,162 @@ function matchesFilter(s) {
 
 function escapeHtml(s) { return (s||"").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c])); }
 
+// ---- drawer (mobile) ----
+function closeDrawer() { $("fleet").classList.remove("open"); $("fleetBackdrop").classList.remove("show"); }
+function toggleDrawer() { $("fleet").classList.toggle("open"); $("fleetBackdrop").classList.toggle("show"); }
+
+// ---- connection state ----
+function setConnState(state) {
+  const dot = $("connDot"), label = $("connLabel"), btn = $("reconnectBtn");
+  dot.className = "conn-dot " + state;
+  label.textContent = ({ connecting: "Connecting…", live: "Live", lost: "Disconnected" })[state] || "";
+  btn.style.display = state === "lost" ? "inline-block" : "none";
+}
+
+function clearReconnectTimer() { if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; } }
+function closeSocket() { if (ws) { try { ws.close(); } catch {} } ws = null; }
+
+function scheduleReconnect(myGen) {
+  if (myGen !== attachGen || !active) return;
+  setConnState("lost");
+  if (reconnectAttempts >= 5) return; // exhausted auto-retry; user can still hit "Reconnect"
+  const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 15000); // 1s,2s,4s,8s,~15s
+  reconnectAttempts++;
+  clearReconnectTimer();
+  reconnectTimer = setTimeout(() => {
+    if (myGen !== attachGen) return;
+    connectWs();
+  }, delay);
+}
+
+function connectWs() {
+  if (!active) return;
+  const { host, session } = active;
+  const myGen = attachGen;
+  wsGen = myGen;
+  setConnState("connecting");
+
+  const wsUrl = host.url.replace(/^http/, "ws") + `/api/sessions/${session.id}/attach` + (host.token ? `?token=${encodeURIComponent(host.token)}` : "");
+  let socket;
+  try {
+    socket = new WebSocket(wsUrl);
+  } catch (e) {
+    scheduleReconnect(myGen);
+    return;
+  }
+  socket.binaryType = "arraybuffer";
+  ws = socket;
+
+  socket.onopen = () => {
+    if (myGen !== attachGen) return;
+    reconnectAttempts = 0;
+    setConnState("live");
+    sendResize();
+  };
+  socket.onmessage = (ev) => {
+    if (myGen !== attachGen || !term) return;
+    if (typeof ev.data === "string") term.write(ev.data);
+    else term.write(new Uint8Array(ev.data));
+  };
+  socket.onerror = () => {
+    if (myGen !== attachGen) return;
+    setConnState("lost");
+  };
+  socket.onclose = () => {
+    if (myGen !== attachGen) return;
+    if (ws === socket) ws = null;
+    if (term) term.write("\r\n\x1b[90m[flotilla: disconnected]\x1b[0m\r\n");
+    if (intentionalClose) return;
+    scheduleReconnect(myGen);
+  };
+}
+
+function sendResize() {
+  if (wsGen !== attachGen) return;
+  if (!ws || ws.readyState !== 1 || !term) return;
+  ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
+}
+
 function attach(host, s) {
-  detach();
+  // Invalidate any handlers/timers tied to a previous session before tearing it down.
+  attachGen++;
+  intentionalClose = false;
+  reconnectAttempts = 0;
+  clearReconnectTimer();
+  closeSocket();
+  if (term) { term.dispose(); term = null; }
+  $("term").innerHTML = "";
+
   active = { host, session: s };
   $("empty").style.display = "none";
   $("termbar").style.display = "flex";
   $("term").style.display = "block";
   $("promptbar").style.display = "flex";
   $("termTitle").textContent = `${host.label} · ${s.name} (${s.profile})`;
-  $("fleet").classList.remove("open");
+  closeDrawer();
 
+  const myGen = attachGen;
   term = new Terminal({ cursorBlink: true, fontSize: 13, fontFamily: "ui-monospace, Menlo, Consolas, monospace",
-    theme: { background: "#000000" }, scrollback: 5000 });
+    theme: { background: "#0b0f17", foreground: "#e6edf7", cursor: "#4f8cff", cursorAccent: "#0b0f17" }, scrollback: 5000 });
   fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
   term.open($("term"));
   fit.fit();
+  term.onData((d) => { if (myGen !== attachGen) return; if (ws && ws.readyState === 1) ws.send(new TextEncoder().encode(d)); });
+  term.onResize(() => { if (myGen !== attachGen) return; sendResize(); });
 
-  const wsUrl = host.url.replace(/^http/, "ws") + `/api/sessions/${s.id}/attach` + (host.token ? `?token=${encodeURIComponent(host.token)}` : "");
-  ws = new WebSocket(wsUrl);
-  ws.binaryType = "arraybuffer";
-  ws.onopen = () => sendResize();
-  ws.onmessage = (ev) => {
-    if (typeof ev.data === "string") term.write(ev.data);
-    else term.write(new Uint8Array(ev.data));
-  };
-  ws.onclose = () => term && term.write("\r\n\x1b[90m[flotilla: disconnected]\x1b[0m\r\n");
-  term.onData((d) => { if (ws && ws.readyState === 1) ws.send(new TextEncoder().encode(d)); });
-  term.onResize(() => sendResize());
+  connectWs();
   refresh();
 }
 
-function sendResize() {
-  if (!ws || ws.readyState !== 1 || !term) return;
-  ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
-}
-
 function detach() {
-  if (ws) { try { ws.close(); } catch {} ws = null; }
+  closeSocket();
   if (term) { term.dispose(); term = null; }
   $("term").innerHTML = "";
 }
 
 window.addEventListener("resize", () => { if (fit) try { fit.fit(); } catch {} });
+// iOS Safari doesn't reliably fire window 'resize' when the soft keyboard opens/closes.
+if (window.visualViewport) {
+  window.visualViewport.addEventListener("resize", () => {
+    if (fit) try { fit.fit(); } catch {}
+    const ae = document.activeElement;
+    if (ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA")) {
+      setTimeout(() => { try { ae.scrollIntoView({ block: "center", behavior: "smooth" }); } catch {} }, 50);
+    }
+  });
+}
 
 // ---- controls ----
 $("refreshBtn").onclick = refresh;
-$("filter").addEventListener("input", refresh);
+$("filter").addEventListener("input", renderFleet); // client-side only, no network round-trip
+$("reconnectBtn").onclick = () => {
+  if (!active) return;
+  clearReconnectTimer();
+  reconnectAttempts = 0;
+  connectWs();
+};
 $("detachBtn").onclick = () => {
-  detach(); active = null;
+  intentionalClose = true;
+  attachGen++; // invalidate any in-flight reconnect/handlers for the session we're leaving
+  clearReconnectTimer();
+  detach();
+  active = null;
   $("termbar").style.display = "none"; $("term").style.display = "none";
   $("promptbar").style.display = "none"; $("empty").style.display = "flex";
   refresh();
 };
 $("killBtn").onclick = async () => {
   if (!active) return;
-  if (!confirm("Kill session " + active.session.name + "?")) return;
-  await api(active.host, "/api/sessions/" + active.session.id, { method: "DELETE" });
-  $("detachBtn").click();
+  const ok = await confirmDialog(`Kill session "${active.session.name}"? This cannot be undone.`, "Kill");
+  if (!ok) return;
+  try {
+    await api(active.host, "/api/sessions/" + active.session.id, { method: "DELETE" });
+    toast("Session killed.", "success");
+    $("detachBtn").click();
+  } catch (e) {
+    toast("Kill failed: " + e.message, "error");
+  }
 };
 $("sendBtn").onclick = sendPrompt;
 $("promptInput").addEventListener("keydown", (e) => { if (e.key === "Enter") sendPrompt(); });
@@ -295,11 +502,17 @@ async function sendPrompt() {
   if (!active) return;
   const v = $("promptInput").value;
   if (!v) return;
-  await api(active.host, "/api/sessions/" + active.session.id + "/input", { method: "POST", body: v });
-  $("promptInput").value = "";
+  try {
+    await api(active.host, "/api/sessions/" + active.session.id + "/input", { method: "POST", body: v });
+    $("promptInput").value = "";
+  } catch (e) {
+    toast("Send failed: " + e.message, "error");
+  }
 }
 
-$("menuBtn").onclick = () => $("fleet").classList.toggle("open");
+$("menuBtn").onclick = toggleDrawer;
+$("fleetBackdrop").onclick = closeDrawer;
+$("emptyAddHostBtn").onclick = () => { renderHostList(); hostsDlg.showModal(); };
 
 // New session dialog
 $("newBtn").onclick = async () => {
@@ -329,7 +542,7 @@ $("createBtn").onclick = async () => {
     newDlg.close(); $("newName").value = ""; $("newTags").value = "";
     await refresh();
     attach(host, s);
-  } catch (e) { alert("Create failed: " + e.message); }
+  } catch (e) { toast("Create failed: " + e.message, "error"); }
 };
 
 // Hosts dialog
@@ -339,19 +552,21 @@ function renderHostList() {
   hosts.forEach((h, i) => {
     const row = document.createElement("div"); row.className = "sess";
     row.innerHTML = `<span class="nm">${escapeHtml(h.label)} <small>${escapeHtml(h.url)}</small></span>`;
-    const test = document.createElement("button"); test.textContent = "🔔"; test.title = "Send a test notification from this host";
+    const test = document.createElement("button"); test.className = "iconbtn"; test.textContent = "🔔";
+    test.title = "Send a test notification from this host"; test.setAttribute("aria-label", "Send test notification from " + h.label);
     test.onclick = async () => {
-      try { await api(h, "/api/notify-test", { method: "POST" }); alert("Test push sent from " + h.label); }
-      catch (e) { alert("Notify test failed (" + h.label + "): " + e.message); }
+      try { await api(h, "/api/notify-test", { method: "POST" }); toast("Test push sent from " + h.label + ".", "success"); }
+      catch (e) { toast("Notify test failed (" + h.label + "): " + e.message, "error"); }
     };
-    const del = document.createElement("button"); del.textContent = "✕";
+    const del = document.createElement("button"); del.className = "iconbtn"; del.textContent = "✕";
+    del.title = "Remove host"; del.setAttribute("aria-label", "Remove host " + h.label);
     del.onclick = () => { hosts.splice(i, 1); saveHosts(hosts); renderHostList(); refresh(); };
     row.appendChild(test); row.appendChild(del); el.appendChild(row);
   });
 }
 $("addHostBtn").onclick = () => {
   const label = $("hLabel").value.trim(), url = $("hUrl").value.trim().replace(/\/$/, ""), token = $("hToken").value.trim();
-  if (!label || !url) return alert("Label and URL required");
+  if (!label || !url) { toast("Label and URL required.", "error"); return; }
   hosts.push({ label, url, token }); saveHosts(hosts);
   $("hLabel").value = $("hUrl").value = $("hToken").value = "";
   renderHostList(); refresh();

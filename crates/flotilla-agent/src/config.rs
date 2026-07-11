@@ -7,15 +7,25 @@ use std::path::PathBuf;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Config {
-    /// Address to bind the HTTP/WS server to. Default 0.0.0.0:7878 (tailnet-facing).
+    /// Address to bind the HTTP/WS server to. Default 127.0.0.1:7878 (loopback).
+    /// Binding to a non-loopback address REQUIRES a token (see main.rs fail-closed
+    /// check) unless the operator explicitly passes `--insecure-no-auth`.
     #[serde(default = "default_bind")]
     pub bind: String,
 
     /// Optional bearer token. When non-empty, every request must send
     /// `Authorization: Bearer <token>`. Tailscale already gates the network;
-    /// this is defense-in-depth. Empty = disabled (fine for local dev).
+    /// this is defense-in-depth. Empty = disabled — permitted ONLY when bound to
+    /// loopback (or when `--insecure-no-auth` is explicitly set).
     #[serde(default)]
     pub token: String,
+
+    /// Cross-origin web origins allowed to call the API (for a multi-host page
+    /// that aggregates several daemons). Empty (default) = no CORS layer at all;
+    /// the same-origin single-host client and PWA still work without CORS.
+    /// Each entry must be a full origin, e.g. "https://fleet.example.com".
+    #[serde(default)]
+    pub allowed_origins: Vec<String>,
 
     /// Where to persist the session metadata snapshot.
     #[serde(default = "default_data_dir")]
@@ -116,7 +126,9 @@ pub struct Profile {
 }
 
 fn default_bind() -> String {
-    "0.0.0.0:7878".to_string()
+    // Fail-closed default: loopback only. Operators must opt into wider exposure
+    // by setting `bind` explicitly, which then requires a token.
+    "127.0.0.1:7878".to_string()
 }
 
 fn default_data_dir() -> PathBuf {
@@ -175,6 +187,7 @@ impl Default for Config {
         Config {
             bind: default_bind(),
             token: String::new(),
+            allowed_origins: Vec::new(),
             data_dir: default_data_dir(),
             host_label: None,
             profiles: default_profiles(),

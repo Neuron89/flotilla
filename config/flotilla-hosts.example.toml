@@ -3,6 +3,11 @@
 #
 # URLs use Tailscale MagicDNS names so they work identically from any machine
 # or your phone, anywhere. Find names with `tailscale status`.
+#
+# ⚠️  This file carries a bearer token per host — treat it like a credentials
+# file (don't commit a filled-in copy; keep permissions tight). Each `token`
+# here must match the `token` set in that host's flotilla.toml, or every
+# request to that host will be rejected once it's bound non-loopback.
 
 [[hosts]]
 label = "home-server"

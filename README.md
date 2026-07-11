@@ -92,7 +92,7 @@ It's the cross-machine, cross-platform piece that [Conductor](https://www.conduc
 |---|---|---|
 | **`flotilla-agent`** | `crates/flotilla-agent` | Per-host daemon. Spawns/owns sessions, exposes REST + WebSocket, detects per-session status, serves the web client. One self-contained binary. |
 | **`flotilla`** | `crates/flotilla-tui` | Terminal control plane. Lists the whole fleet color-coded by status; attach (raw, tmux-style), spawn, kill. |
-| **Web / mobile client** | `crates/flotilla-agent/web/index.html` | Baked into the daemon, served at `/`. Fleet grid, interactive xterm.js attach, and a fire-and-forget "send a prompt" box that shines on a phone. |
+| **Web / mobile client** | `crates/flotilla-agent/web/index.html` | Baked into the daemon, served at `/`. Fleet grid, interactive xterm.js attach, and a fire-and-forget "send a prompt" box that shines on a phone. xterm.js is vendored (no CDN fetch), so it works fully offline on an isolated tailnet. |
 
 <br/>
 
@@ -162,7 +162,12 @@ Point the TUI at the **whole fleet** with a hosts file
 
 ## 🛰️ HTTP / WebSocket API
 
-All routes under `/api`. Bearer token optional — `Authorization: Bearer …` or `?token=`.
+All routes under `/api`. Auth is **required for any non-loopback bind**: send
+the token as `Authorization: Bearer …` or `?token=`. Leave `token` empty in
+`flotilla.toml` and the daemon fails closed — it binds loopback-only
+(`127.0.0.1`) and refuses to come up on `0.0.0.0`/a LAN address without one.
+Token comparison is constant-time to resist timing attacks, and the WebSocket
+attach endpoint checks the `Origin` header.
 
 | Method | Path | Purpose |
 |:---:|---|---|
@@ -196,6 +201,30 @@ All routes under `/api`. Bearer token optional — `Authorization: Bearer …` o
    - 🪟 Windows — `./deploy/install-windows.ps1` (logon-triggered Scheduled Task)
 3. **[Wire shared memory](deploy/obsidian-shared-memory.md)** — point profile `cwd` at your agent workspace.
 4. Put every host's tailnet URL in `flotilla-hosts.toml` (and the web client's Hosts dialog).
+
+<br/>
+
+### 🔒 Security
+
+Flotilla is a remote-shell daemon by design — treat it accordingly:
+
+- **Tailnet is a boundary, not the only control.** Anyone on the tailnet (or
+  anyone who compromises a device on it) can reach the agent's HTTP/WS API, so
+  auth still matters even though "it's all internal."
+- **Auth is required for any non-loopback bind.** An empty `token` makes the
+  daemon fail closed to `127.0.0.1` only; set a real token
+  (`openssl rand -hex 24`) to bind `0.0.0.0`/a LAN address. Both install
+  scripts generate one for you if you leave the shipped placeholder in place.
+- **Run it as a dedicated, low-privilege account** where practical, not your
+  primary login — the daemon can spawn a shell as whatever user runs it, so a
+  leaked token is as powerful as that account.
+- **The config file holds secrets** (bearer token, ntfy token).
+  `install-linux.sh` `chmod 600`s it and `install-windows.ps1` strips
+  inherited ACL entries so only the running account can read it — don't
+  loosen that.
+- **Prefer self-hosted ntfy** on your own tailnet over public ntfy.sh. On
+  public ntfy.sh the topic name *is* the secret; if you do use it, pick a
+  long, unguessable topic, not a short recognizable one.
 
 <br/>
 
