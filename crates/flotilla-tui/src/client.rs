@@ -71,13 +71,14 @@ pub struct Client {
 }
 
 impl Client {
-    pub fn new() -> Client {
-        Client {
-            http: reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(5))
-                .build()
-                .expect("http client"),
-        }
+    /// Build the shared HTTP client. Returns an error instead of panicking if
+    /// the underlying TLS/HTTP backend fails to initialize.
+    pub fn new() -> Result<Client> {
+        let http = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+            .context("building http client")?;
+        Ok(Client { http })
     }
 
     fn req(&self, host: &Host, method: reqwest::Method, path: &str) -> reqwest::RequestBuilder {

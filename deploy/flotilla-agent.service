@@ -6,14 +6,30 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+# SECURITY NOTE: this daemon is effectively a remote shell for whatever user
+# it runs as — anyone who can authenticate to it can spawn a PTY running that
+# user's shell with that user's PATH, ~/.claude, and file permissions. Running
+# it as your primary login identity (the default here, for convenience with
+# Claude/Hermes profiles that expect your normal env) means a compromised
+# token is a compromised account. Where practical, prefer creating a
+# constrained, dedicated low-privilege account for it instead (with just the
+# env/config it needs), and only fall back to your login user if the spawned
+# profiles genuinely require your full interactive environment.
 # Run as your user so spawned agents inherit your shell, PATH, and ~/.claude.
 User=%i
 ExecStart=/usr/local/bin/flotilla-agent --config /etc/flotilla/flotilla.toml
-Restart=always
+Restart=on-failure
 RestartSec=3
 # Keep sessions alive across transient failures; the daemon owns the PTYs.
 KillMode=mixed
 Environment=RUST_LOG=info
+
+# Reasonable resource ceilings that don't interfere with spawning interactive
+# shells/agents. Deliberately NOT adding ProtectHome=yes, PrivateUsers, or
+# NoNewPrivileges here — those would break profiles that need sudo or the
+# user's real home directory.
+TasksMax=512
+LimitNPROC=512
 
 [Install]
 WantedBy=multi-user.target

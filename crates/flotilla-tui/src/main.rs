@@ -107,13 +107,23 @@ async fn main() -> Result<()> {
 
     let mut app = App {
         hosts,
-        client: Client::new(),
+        client: Client::new()?,
         rows: Vec::new(),
         host_status: Vec::new(),
         list_state: ListState::default(),
         status_msg: "loading…".into(),
         mode: Mode::Normal,
     };
+
+    // Install a panic hook that restores the terminal (raw mode + alt screen)
+    // before handing off to the default hook, so a panic mid-draw never leaves
+    // the user's shell in a broken state.
+    let orig_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let _ = disable_raw_mode();
+        let _ = execute!(stdout(), LeaveAlternateScreen, crossterm::cursor::Show);
+        orig_hook(info);
+    }));
 
     enable_raw_mode()?;
     execute!(stdout(), EnterAlternateScreen)?;
@@ -206,7 +216,8 @@ async fn handle_new_session_key(app: &mut App, code: KeyCode) {
         KeyCode::Esc => app.mode = Mode::Normal,
         KeyCode::Up | KeyCode::Char('k') => {
             if let Mode::NewSession { sel, .. } = &mut app.mode {
-                *sel = if sel.checked_sub(1).is_some() && len > 0 { (*sel + len - 1) % len } else { 0 };
+                // Wrap symmetrically with Down: sel==0 goes to the last item.
+                if len > 0 { *sel = (*sel + len - 1) % len; }
             }
         }
         KeyCode::Down | KeyCode::Char('j') => {
@@ -345,7 +356,16 @@ fn ui(f: &mut Frame, app: &App) {
 }
 
 fn trunc(s: &str, n: usize) -> String {
-    if s.len() <= n { s.to_string() } else { format!("{}…", &s[..n.saturating_sub(1)]) }
+    // Char-aware: never slice at a raw byte offset, so multi-byte UTF-8
+    // (emoji, accents) in a host label can't land us on a non-char boundary.
+    if s.chars().count() <= n {
+        s.to_string()
+    } else {
+        let budget = n.saturating_sub(1);
+        let mut out: String = s.chars().take(budget).collect();
+        out.push('…');
+        out
+    }
 }
 
 fn centered_rect(pct_x: u16, pct_y: u16, area: Rect) -> Rect {

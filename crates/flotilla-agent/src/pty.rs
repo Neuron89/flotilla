@@ -6,6 +6,7 @@ use bytes::Bytes;
 use parking_lot::Mutex;
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use serde::Serialize;
+use std::collections::VecDeque;
 use std::io::{Read, Write};
 use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
@@ -68,7 +69,9 @@ pub struct Session {
     master: Mutex<Box<dyn MasterPty + Send>>,
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
     child: Arc<Mutex<Box<dyn portable_pty::Child + Send + Sync>>>,
-    buffer: Arc<Mutex<Vec<u8>>>,
+    // VecDeque so scrollback overflow is an O(overflow) pop_front rather than an
+    // O(n) memmove on every hot-path write.
+    buffer: Arc<Mutex<VecDeque<u8>>>,
     last_output: Arc<Mutex<Instant>>,
     exit_code: Arc<Mutex<Option<i32>>>,
     tx: broadcast::Sender<Bytes>,
@@ -107,7 +110,7 @@ impl Session {
         let mut reader = pair.master.try_clone_reader()?;
         let writer = pair.master.take_writer()?;
 
-        let buffer = Arc::new(Mutex::new(Vec::<u8>::with_capacity(8192)));
+        let buffer = Arc::new(Mutex::new(VecDeque::<u8>::with_capacity(8192)));
         let last_output = Arc::new(Mutex::new(Instant::now()));
         let exit_code = Arc::new(Mutex::new(None));
         let child = Arc::new(Mutex::new(child));
@@ -129,7 +132,7 @@ impl Session {
                             let data = &chunk[..n];
                             {
                                 let mut buf = buffer.lock();
-                                buf.extend_from_slice(data);
+                                buf.extend(data.iter().copied());
                                 if buf.len() > SCROLLBACK_CAP {
                                     let overflow = buf.len() - SCROLLBACK_CAP;
                                     buf.drain(0..overflow);
@@ -169,9 +172,10 @@ impl Session {
         }))
     }
 
-    /// Current scrollback for replay on attach.
+    /// Current scrollback for replay on attach. Returns a contiguous copy.
     pub fn snapshot(&self) -> Bytes {
-        Bytes::copy_from_slice(&self.buffer.lock())
+        let mut buf = self.buffer.lock();
+        Bytes::copy_from_slice(buf.make_contiguous())
     }
 
     /// Subscribe to the live output stream.
@@ -220,22 +224,36 @@ impl Session {
     }
 
     /// Inspect the tail of the buffer for common "awaiting input" signatures.
+    ///
+    /// Only the final non-empty line (after trimming trailing whitespace) is
+    /// considered — a prompt is what the user is currently staring at, not
+    /// something buried up in scrollback. This kills false positives like a
+    /// mid-output sentence that merely ends in "? " (which used to spam
+    /// notifications).
     fn looks_like_prompt(&self) -> bool {
-        let buf = self.buffer.lock();
-        let start = buf.len().saturating_sub(240);
-        let tail = String::from_utf8_lossy(&buf[start..]);
-        let tail_trim = tail.trim_end();
-        const NEEDLES: [&str; 8] = [
+        let mut buf = self.buffer.lock();
+        let contiguous = buf.make_contiguous();
+        let start = contiguous.len().saturating_sub(240);
+        let tail = String::from_utf8_lossy(&contiguous[start..]);
+        let last_line = tail.trim_end().rsplit('\n').next().unwrap_or("").trim();
+        if last_line.is_empty() {
+            return false;
+        }
+        // Unambiguous interactive markers anchored to the last line.
+        const NEEDLES: [&str; 6] = [
             "(y/n)",
             "[Y/n]",
             "[y/N]",
-            "Do you want",
             "Press enter",
             "❯",
-            "? ",
             "password:",
         ];
-        NEEDLES.iter().any(|n| tail_trim.contains(n))
+        if NEEDLES.iter().any(|n| last_line.contains(n)) {
+            return true;
+        }
+        // Confirmation questions ("Do you want to …?"): require the '?' to be the
+        // final non-space character so ordinary prose doesn't trip the heuristic.
+        last_line.ends_with('?') && last_line.contains("Do you want")
     }
 
     pub fn info(&self) -> SessionInfo {

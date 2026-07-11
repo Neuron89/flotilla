@@ -26,6 +26,29 @@ struct Args {
     /// Override the bearer token.
     #[arg(long, env = "FLOTILLA_TOKEN")]
     token: Option<String>,
+
+    /// Allow starting on a NON-loopback bind address with NO token. This exposes
+    /// unauthenticated shell access to the network — only use behind a trusted
+    /// gate (e.g. Tailscale ACLs). Ignored when a token is set (auth is always
+    /// enforced then).
+    #[arg(long, env = "FLOTILLA_INSECURE_NO_AUTH", default_value_t = false)]
+    insecure_no_auth: bool,
+}
+
+/// True only if every socket address `bind` resolves to is a loopback address
+/// (127.0.0.0/8 or ::1). Unspecified addresses like 0.0.0.0 / :: are NOT
+/// loopback, so they correctly require auth.
+fn is_loopback_bind(bind: &str) -> bool {
+    use std::net::ToSocketAddrs;
+    match bind.to_socket_addrs() {
+        Ok(addrs) => {
+            let addrs: Vec<_> = addrs.collect();
+            !addrs.is_empty() && addrs.iter().all(|a| a.ip().is_loopback())
+        }
+        // If we cannot resolve it, be conservative and treat it as non-loopback
+        // so the fail-closed check applies.
+        Err(_) => false,
+    }
 }
 
 #[tokio::main]
@@ -49,6 +72,28 @@ async fn main() -> Result<()> {
     let bind = cfg.bind.clone();
     let label = cfg.label();
     let token_on = !cfg.token.is_empty();
+
+    // Fail-closed auth gate. Because this daemon pipes bytes into real shells,
+    // exposing it without a token is only acceptable on loopback.
+    let loopback = is_loopback_bind(&bind);
+    if !token_on {
+        if loopback {
+            tracing::warn!(
+                "no token configured — daemon is UNAUTHENTICATED but bound to loopback ({bind}) only"
+            );
+        } else if args.insecure_no_auth {
+            tracing::warn!(
+                "⚠ INSECURE: starting on non-loopback bind {bind} with NO token because --insecure-no-auth was set. Anyone who can reach this address has full shell access."
+            );
+        } else {
+            anyhow::bail!(
+                "refusing to start: bind {bind} is not loopback and no token is set. \
+                 Set a token (config `token`, --token, or FLOTILLA_TOKEN), bind to 127.0.0.1, \
+                 or pass --insecure-no-auth to explicitly accept unauthenticated network exposure."
+            );
+        }
+    }
+
     let manager = manager::Manager::new(cfg);
     notify::spawn_watcher(Arc::clone(&manager));
     let app = api::router(Arc::clone(&manager));

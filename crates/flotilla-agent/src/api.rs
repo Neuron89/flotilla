@@ -5,7 +5,7 @@ use axum::{
         ws::{Message, WebSocket, WebSocketUpgrade},
         Path, Query, State,
     },
-    http::{header, HeaderMap, StatusCode},
+    http::{header, HeaderMap, HeaderValue, Method, StatusCode},
     middleware::{self, Next},
     response::{Html, IntoResponse, Response},
     routing::{get, post},
@@ -17,7 +17,7 @@ use serde_json::json;
 use std::collections::HashMap;
 use std::io::Write;
 use std::sync::Arc;
-use tower_http::cors::CorsLayer;
+use tower_http::cors::{AllowOrigin, CorsLayer};
 
 use crate::manager::Manager;
 
@@ -38,11 +38,67 @@ pub fn router(manager: Arc<Manager>) -> Router {
         .layer(middleware::from_fn_with_state(manager.clone(), auth))
         .with_state(manager.clone());
 
-    Router::new()
+    let root = Router::new()
         .route("/", get(index))
         .route("/manifest.json", get(manifest))
-        .nest("/api", api)
-        .layer(CorsLayer::very_permissive())
+        .route(
+            "/vendor/xterm.css",
+            get(|| async { ([(header::CONTENT_TYPE, "text/css")], include_str!("../web/vendor/xterm.css")) }),
+        )
+        .route(
+            "/vendor/xterm.js",
+            get(|| async {
+                (
+                    [(header::CONTENT_TYPE, "application/javascript")],
+                    include_str!("../web/vendor/xterm.js"),
+                )
+            }),
+        )
+        .route(
+            "/vendor/xterm-addon-fit.js",
+            get(|| async {
+                (
+                    [(header::CONTENT_TYPE, "application/javascript")],
+                    include_str!("../web/vendor/xterm-addon-fit.js"),
+                )
+            }),
+        )
+        .nest("/api", api);
+
+    // CORS: no blanket-permissive layer. The same-origin single-host client and
+    // PWA need no CORS headers at all. Only when the operator lists peer origins
+    // (multi-host aggregation page) do we attach an allowlist layer.
+    match build_cors(&manager.config.allowed_origins) {
+        Some(cors) => root.layer(cors),
+        None => root,
+    }
+}
+
+/// Build a CORS layer restricted to exactly the configured origins, or `None`
+/// when none are configured (same-origin works without any CORS layer). Invalid
+/// entries are logged and skipped rather than panicking.
+fn build_cors(allowed: &[String]) -> Option<CorsLayer> {
+    if allowed.is_empty() {
+        return None;
+    }
+    let mut origins: Vec<HeaderValue> = Vec::new();
+    for o in allowed {
+        match o.parse::<HeaderValue>() {
+            Ok(hv) => origins.push(hv),
+            Err(e) => tracing::warn!("ignoring invalid allowed_origin {o:?}: {e}"),
+        }
+    }
+    if origins.is_empty() {
+        return None;
+    }
+    // Reflect exactly the listed origins (never AllowOrigin::any) with the
+    // methods/headers the API uses.
+    Some(
+        CorsLayer::new()
+            .allow_origin(AllowOrigin::list(origins))
+            .allow_methods([Method::GET, Method::POST, Method::DELETE])
+            .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE]),
+    )
 }
 
 async fn index() -> Html<&'static str> {
@@ -65,7 +121,8 @@ async fn notify_test(State(mgr): State<Arc<Manager>>) -> Response {
 
 /// Bearer-token gate. Accepts the token via `Authorization: Bearer <t>` header
 /// or `?token=<t>` query (so browser WebSockets, which can't set headers, work).
-/// Empty configured token disables the check.
+/// The check is ENFORCED whenever a token is configured; it is bypassed only
+/// when no token is set (the loopback/insecure case gated at startup).
 async fn auth(State(mgr): State<Arc<Manager>>, req: axum::extract::Request, next: Next) -> Response {
     let expected = &mgr.config.token;
     if expected.is_empty() {
@@ -80,8 +137,15 @@ async fn auth(State(mgr): State<Arc<Manager>>, req: axum::extract::Request, next
     let from_query = req.uri().query().and_then(|q| {
         url_query(q).get("token").cloned()
     });
-    let provided = from_header.or(from_query);
-    if provided.as_deref() == Some(expected.as_str()) {
+    // Constant-time compare to avoid leaking the token via timing. A missing
+    // token is rejected. Note: we never log `provided` or the raw query string.
+    let ok = match from_header.or(from_query) {
+        Some(provided) => {
+            constant_time_eq::constant_time_eq(provided.as_bytes(), expected.as_bytes())
+        }
+        None => false,
+    };
+    if ok {
         next.run(req).await
     } else {
         (StatusCode::UNAUTHORIZED, "missing or invalid token").into_response()
@@ -182,14 +246,18 @@ async fn send_input(
     if !bytes.ends_with(b"\n") && !bytes.ends_with(b"\r") {
         bytes.push(b'\r');
     }
+    // PTY writes are blocking OS I/O; a stuck child could otherwise wedge a tokio
+    // worker. Run the write on the blocking pool.
     let writer = session.writer();
-    {
+    let res = tokio::task::spawn_blocking(move || {
         let mut w = writer.lock();
-        if w.write_all(&bytes).and_then(|_| w.flush()).is_err() {
-            return (StatusCode::INTERNAL_SERVER_ERROR, "write failed").into_response();
-        }
+        w.write_all(&bytes).and_then(|_| w.flush())
+    })
+    .await;
+    match res {
+        Ok(Ok(())) => StatusCode::ACCEPTED.into_response(),
+        _ => (StatusCode::INTERNAL_SERVER_ERROR, "write failed").into_response(),
     }
-    StatusCode::ACCEPTED.into_response()
 }
 
 async fn ws_attach(
@@ -197,12 +265,40 @@ async fn ws_attach(
     State(mgr): State<Arc<Manager>>,
     Path(id): Path<String>,
     Query(_q): Query<HashMap<String, String>>,
-    _headers: HeaderMap,
+    headers: HeaderMap,
 ) -> Response {
+    // Cross-Site WebSocket Hijacking / DNS-rebinding defense: browsers always
+    // send Origin on a WS upgrade, and (unlike headers) it cannot be forged by
+    // page JS. Non-browser clients (the TUI) send no Origin and are allowed.
+    if !origin_allowed(&headers, &mgr.config.allowed_origins) {
+        return (StatusCode::FORBIDDEN, "origin not allowed").into_response();
+    }
     let Some(session) = mgr.get(&id) else {
         return (StatusCode::NOT_FOUND, "no such session").into_response();
     };
     ws.on_upgrade(move |socket| handle_attach(socket, session))
+}
+
+/// Allow the upgrade when: no Origin header (native clients), OR the Origin's
+/// host:port matches the request's own Host (same-origin), OR the Origin is in
+/// the configured `allowed_origins` list.
+fn origin_allowed(headers: &HeaderMap, allowed: &[String]) -> bool {
+    let origin = match headers.get(header::ORIGIN).and_then(|v| v.to_str().ok()) {
+        Some(o) => o,
+        None => return true, // no Origin → not a browser cross-site request
+    };
+    if allowed.iter().any(|a| a == origin) {
+        return true;
+    }
+    // Same-origin: compare the Origin's authority (host[:port]) to the Host header.
+    if let Some(host) = headers.get(header::HOST).and_then(|v| v.to_str().ok()) {
+        if let Some(origin_authority) = origin.split("://").nth(1) {
+            if origin_authority == host {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// Bidirectional bridge between a WebSocket client (xterm.js or the TUI) and the
@@ -212,15 +308,16 @@ async fn ws_attach(
 async fn handle_attach(socket: WebSocket, session: Arc<crate::pty::Session>) {
     let (mut sender, mut receiver) = socket.split();
 
+    // Subscribe BEFORE snapshotting so any bytes produced in the gap are captured
+    // by the live stream. Worst case a few bytes replay twice (harmless in a
+    // terminal); the alternative ordering silently drops them.
+    let mut rx = session.subscribe();
+
     // Replay scrollback so a fresh client sees existing context.
     let snapshot = session.snapshot();
-    if !snapshot.is_empty() {
-        if sender.send(Message::Binary(snapshot.to_vec())).await.is_err() {
-            return;
-        }
+    if !snapshot.is_empty() && sender.send(Message::Binary(snapshot.to_vec())).await.is_err() {
+        return;
     }
-
-    let mut rx = session.subscribe();
 
     // Output pump: PTY → client.
     let out = tokio::spawn(async move {
@@ -238,27 +335,26 @@ async fn handle_attach(socket: WebSocket, session: Arc<crate::pty::Session>) {
         let _ = sender.close().await;
     });
 
-    // Input pump: client → PTY.
+    // Input pump: client → PTY. All PTY writes go through the blocking pool so a
+    // stuck child can't wedge a tokio worker.
     let writer = session.writer();
     while let Some(Ok(msg)) = receiver.next().await {
         match msg {
             Message::Binary(data) => {
-                let mut w = writer.lock();
-                let _ = w.write_all(&data);
-                let _ = w.flush();
+                pty_write(&writer, data).await;
             }
             Message::Text(text) => {
                 if let Ok(val) = serde_json::from_str::<serde_json::Value>(&text) {
                     if val.get("type").and_then(|v| v.as_str()) == Some("resize") {
-                        let cols = val.get("cols").and_then(|v| v.as_u64()).unwrap_or(120) as u16;
-                        let rows = val.get("rows").and_then(|v| v.as_u64()).unwrap_or(40) as u16;
+                        // Clamp client-supplied dimensions to a sane range; the raw
+                        // `as u16` cast would otherwise wrap absurd values mod 65536.
+                        let cols = clamp_dim(val.get("cols").and_then(|v| v.as_u64()), 120);
+                        let rows = clamp_dim(val.get("rows").and_then(|v| v.as_u64()), 40);
                         session.resize(rows, cols);
                     }
                 } else {
                     // Treat unstructured text as input too.
-                    let mut w = writer.lock();
-                    let _ = w.write_all(text.as_bytes());
-                    let _ = w.flush();
+                    pty_write(&writer, text.into_bytes()).await;
                 }
             }
             Message::Close(_) => break,
@@ -267,4 +363,24 @@ async fn handle_attach(socket: WebSocket, session: Arc<crate::pty::Session>) {
     }
 
     out.abort();
+}
+
+/// Clamp a client-provided terminal dimension into 1..=1000, falling back to
+/// `default` when absent or out of range.
+fn clamp_dim(v: Option<u64>, default: u16) -> u16 {
+    match v {
+        Some(n) if (1..=1000).contains(&n) => n as u16,
+        _ => default,
+    }
+}
+
+/// Perform a blocking PTY write off the async runtime.
+async fn pty_write(writer: &Arc<parking_lot::Mutex<Box<dyn Write + Send>>>, data: Vec<u8>) {
+    let writer = writer.clone();
+    let _ = tokio::task::spawn_blocking(move || {
+        let mut w = writer.lock();
+        let _ = w.write_all(&data);
+        let _ = w.flush();
+    })
+    .await;
 }

@@ -1,16 +1,39 @@
 # flotilla-agent configuration — copy to flotilla.toml and edit per host.
 # Loaded with:  flotilla-agent --config /path/to/flotilla.toml
+#
+# ⚠️  THIS FILE CONTAINS SECRETS (bearer token, ntfy token). Keep the copy at
+# /etc/flotilla/flotilla.toml (or %LOCALAPPDATA%\Flotilla\flotilla.toml)
+# readable only by the account that runs the daemon — the install scripts
+# chmod it 600 / restrict its ACL for you.
 
-# Bind to the tailnet. 0.0.0.0 is fine because Tailscale is the access boundary;
-# nothing here is exposed to the public internet unless you forward it.
+# Recommended default is loopback-only (127.0.0.1). Binding 0.0.0.0 — even on
+# a trusted tailnet — should be an explicit, deliberate opt-in: it's what
+# actually puts the daemon on the wire for every other tailnet member (and
+# anyone who lands on that network) to reach.
 bind = "0.0.0.0:7878"
 
-# Optional shared bearer token (defense-in-depth on top of the tailnet ACL).
-# Leave empty to disable. If set, every client must present it.
-token = ""
+# Shared bearer token — required for any non-loopback bind. Every client must
+# send this as `Authorization: Bearer …` or `?token=`. If this is left empty,
+# the daemon fails closed: it will refuse to bind anywhere but 127.0.0.1
+# rather than serve an unauthenticated endpoint to the tailnet. The install
+# scripts generate a random token for you if you leave this placeholder in
+# place; to set your own, use something like:
+#   openssl rand -hex 24
+# (To deliberately run token-less on a NON-loopback bind, you must pass the
+#  explicit `--insecure-no-auth` flag — the daemon will not do it silently.)
+token = "REPLACE_ME_generate_with_openssl_rand_hex_24"
 
 # Friendly name shown in the fleet UIs. Defaults to the machine hostname.
 host_label = "home-server"
+
+# Cross-origin allowlist for the browser/PWA client. The web client served by
+# THIS host is same-origin and needs nothing here. Only add entries if you open
+# ONE web page that aggregates several hosts (the fleet grid fetching peer
+# hosts' APIs cross-origin) — list each peer's full origin, scheme included.
+# Empty (the default) means: same-origin only. It also gates the WebSocket
+# Origin check, so a stray/ malicious website can't hijack an attach socket.
+# allowed_origins = ["http://home-server:7878", "http://work-server:7878"]
+allowed_origins = []
 
 # Where session metadata snapshots are written (best-effort, for observability).
 # data_dir = "/var/lib/flotilla"
@@ -53,10 +76,16 @@ description = "Login shell"
 # your input), this host POSTs to your ntfy topic so your phone buzzes — even
 # when you've walked away. Self-host ntfy on the tailnet, or use ntfy.sh with
 # an unguessable topic. Install the ntfy app and subscribe to the same topic.
+#
+# NOTE: on public ntfy.sh, the topic name IS the only secret — anyone who
+# guesses/knows it can read your notifications (session names, tags, host
+# labels) and publish to it. Use a long random topic, not something guessable
+# like "flotilla-alerts". Prefer self-hosting ntfy on your own tailnet, where
+# the tailnet ACL is the access boundary instead of topic secrecy.
 [notifications]
 enabled = false                       # flip to true once topic is set
 ntfy_url = "https://ntfy.sh"          # or http://ntfy.your-tailnet:80
-topic = "flotilla-CHANGE-ME-9f3k2"    # pick something unguessable
+topic = "flotilla-CHANGE-ME-9f3k2"    # pick something long + unguessable, not this
 token = ""                            # optional ntfy access token (Bearer)
 priority = "high"                     # min | low | default | high | urgent
 notify_on = ["waiting"]               # add "exited" to alert on process exit

@@ -9,6 +9,13 @@
   A console daemon doesn't behave well under the Windows Service Manager, so we
   use a logon-triggered Scheduled Task instead — it runs in your user context so
   spawned Claude/Hermes sessions inherit your PATH and ~/.claude config.
+
+  -Token is accepted for convenience but is written into the per-user config
+  file rather than the Scheduled Task's command line — a command line is
+  visible to any local process (Get-CimInstance Win32_Process, Task
+  Scheduler's UI, etc.), so a token passed there isn't a secret. If -Token is
+  omitted and the config doesn't already have one, a strong random token is
+  generated and printed once.
 #>
 param(
   [int]$Port = 7878,
@@ -39,7 +46,27 @@ if (-not (Test-Path $configPath)) {
   Write-Host "    wrote $configPath"
 } else {
   Write-Host "    $configPath exists - leaving it"
+  if ($Token) { (Get-Content $configPath) -replace '^token = .*', "token = `"$Token`"" | Set-Content $configPath }
 }
+
+# Fail-open guard: an empty (or still-placeholder) token means the daemon
+# refuses non-loopback binds. Generate a strong random one instead of shipping
+# with auth disabled, unless a real token is already in place.
+$existingToken = (Select-String -Path $configPath -Pattern '^token = "(.*)"' | ForEach-Object { $_.Matches[0].Groups[1].Value } | Select-Object -First 1)
+if ([string]::IsNullOrEmpty($existingToken) -or $existingToken -like 'REPLACE_ME*') {
+  $bytes = New-Object byte[] 24
+  [System.Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
+  $genToken = -join ($bytes | ForEach-Object { $_.ToString("x2") })
+  (Get-Content $configPath) -replace '^token = .*', "token = `"$genToken`"" | Set-Content $configPath
+  Write-Host "    generated a random bearer token (shown once):" -ForegroundColor Yellow
+  Write-Host "        $genToken" -ForegroundColor Yellow
+  Write-Host "    saved in $configPath - copy it into flotilla-hosts.toml for the TUI/web client"
+}
+
+# The config holds the bearer token + ntfy token - restrict it to the current
+# user only (strip inherited ACEs, grant just this account full control).
+icacls $configPath /inheritance:r | Out-Null
+icacls $configPath /grant:r "$($env:USERDOMAIN)\$($env:USERNAME):(F)" | Out-Null
 
 $taskName = "FlotillaAgent"
 $action = New-ScheduledTaskAction -Execute "$installDir\flotilla-agent.exe" `
