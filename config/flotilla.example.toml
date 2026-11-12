@@ -25,7 +25,7 @@ host_label = "home-server"
 name = "claude"
 command = "claude"
 args = []
-# cwd = "/home/hnester/agent-workspace"   # holds CLAUDE.md + Obsidian MCP context
+# cwd = "/home/you/agent-workspace"   # holds CLAUDE.md + Obsidian MCP context
 description = "Claude Code (inherits user-scope MCP incl. Obsidian KB)"
 
 [[profiles]]
@@ -42,11 +42,11 @@ description = "Login shell"
 
 # Example: a Claude session pinned to a specific repo with an injected env var.
 # [[profiles]]
-# name = "portal"
+# name = "my-project"
 # command = "claude"
-# cwd = "/home/hnester/portal"
+# cwd = "/home/you/projects/my-project"
 # [profiles.env]
-# FLOTILLA_SESSION = "portal"
+# FLOTILLA_SESSION = "my-project"
 
 # ---- Phone push notifications (Phase 2, via ntfy) -------------------------
 # When a session transitions into a watched state (e.g. it starts WAITING on

@@ -20,7 +20,7 @@ your AI instances read and write on every change.
    [[profiles]]
    name = "claude"
    command = "claude"
-   cwd = "/home/hnester/agent-workspace"   # CLAUDE.md links to the vault
+   cwd = "/home/you/agent-workspace"   # CLAUDE.md links to the vault
    ```
 
 3. **The vault is reachable fleet-wide.** The Obsidian Local REST API

@@ -58,8 +58,8 @@ key management — handy for running the install scripts and pulling updates.
 
 ## Why not Cloudflare Tunnel here?
 
-Your other apps (sds.nycoa.io, status.nycoa.io) are *public* services that want
-a public hostname. Flotilla is the opposite: a private control plane you never
+Cloudflare Tunnel suits *public* services that want a public hostname.
+Flotilla is the opposite: a private control plane you never
 want on the public internet. Tailscale keeps it dark and still reachable from
 anywhere — including the work network, without poking holes in either firewall.
 ```
